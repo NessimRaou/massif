@@ -1,0 +1,23 @@
+[package]
+name = "massif"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "*", features = ["derive"] }
+itertools = "*"
+csv = "*"
+clap = { version = "4", features = ["derive"] }
+nalgebra = "0.29"
+pdbtbx = "0.12.0"
+rayon = "1.10.0"
+indicatif = {version = "*", features = ["rayon"]}
+rstar = {version = "*"}
+indexmap = "2"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench"
+harness = false
