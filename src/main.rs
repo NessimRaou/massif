@@ -188,7 +188,10 @@ enum Commands {
         reference_structure: String,
         /// Aggregated identifiers of the chains used for the fitting (e.g. "AB" or "C")
         chain_ids: String, // Identifiers of the chains between which the distance is computed
-                           // dist_to_chains: String
+        #[arg(value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
+        metric: String, // Type of the distance computed between the structures, value is: TM-score|rmsd-cur
+        rmsd_chains: Option<String>, // Chain between which the rmsd will be computed
+        // dist_to_chains: String
     },
     /// Complete analysis on contacts.
     Contacts {
@@ -240,11 +243,13 @@ fn main() {
             output_dir,
             reference_structure,
             chain_ids,
+            metric,
+            rmsd_chains,
         } => {
             //, dist_to_chains} => {
             let reference_chain = chain_ids;
-            let (pdb1, _errors) = open(&reference_structure).expect("Failed to open first PDB");
-            // allignment computing
+            let (pdb1, _errors) = open(&reference_structure).expect(&format!("Failed to open first PDB {}", &reference_structure));
+            // alignment computing
             if do_in_parallel {
                 parallel_all_alignment(
                     &file_names,
@@ -267,18 +272,29 @@ fn main() {
             // Computing of distances
             let compute_distance = true;
             if compute_distance {
-                let dtype = "tm-score"; // "tm-score"|"rmsd-cur"
+                let dtype = &metric; // "TM-score"|"rmsd-cur"
                 let distances =
-                    all_distances(&reference_structure, &file_names, &output_dir, dtype);
+                    all_distances(&reference_structure, &file_names, &output_dir, dtype, &rmsd_chains);
                 let distances_string: Vec<String> =
                     distances.iter().map(|&num| num.to_string()).collect();
-                report_colnames.push(format!(
-                    "TM-score to {}",
+                let chain_names = match rmsd_chains {
+                    Some(chain_group) => {
+                        format!(" ({})", &chain_group)
+                    }
+                    None => {
+                        String::from("")
+                    }
+                };
+                let colname = format!(
+                    "{} to {}{}",
+                    metric,
                     Path::new(&reference_structure)
                         .file_stem()
                         .expect("No basename for this path")
-                        .to_string_lossy()
-                ));
+                        .to_string_lossy(),
+                    chain_names
+                );
+                report_colnames.push(colname);
                 final_report.push(distances_string);
             }
         }

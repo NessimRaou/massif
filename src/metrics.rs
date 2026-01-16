@@ -5,9 +5,11 @@ use indicatif::{ParallelProgressIterator, ProgressIterator};
 use nalgebra::Vector3;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::PDB;
+use pdbtbx::{ReadOptions, StrictnessLevel};
 use rayon::prelude::*;
 
 use crate::progress::default_progress_style;
+use crate::alignment::collect_atom_positions_ref;
 
 /// Compute TM score between two structure
 fn tm_score(pdb1: &PDB, pdb2: &PDB) -> f64 {
@@ -28,9 +30,21 @@ fn tm_score(pdb1: &PDB, pdb2: &PDB) -> f64 {
 }
 
 /// Compute RMSD between two structure
-fn rmsd(pdb1: &PDB, pdb2: &PDB) -> f64 {
-    let pdb1_coord = get_atom_coordinates(pdb1);
-    let pdb2_coord = get_atom_coordinates(pdb2);
+fn rmsd(pdb1: &PDB, pdb2: &PDB, rmsd_chains: &Option<String>) -> f64 {
+    let (pdb1_coord, pdb2_coord) = match rmsd_chains {
+        Some(chain_group) => {
+            (
+                collect_atom_positions_ref(pdb1, chain_group),
+                collect_atom_positions_ref(pdb2, chain_group)
+            )
+        }
+        None => {
+            (
+                get_atom_coordinates(pdb1),
+                get_atom_coordinates(pdb2)
+            )
+        }
+    };
     let rmsd_sum: f64 = pdb1_coord
         .par_iter()
         .zip(pdb2_coord.par_iter())
@@ -43,10 +57,10 @@ fn rmsd(pdb1: &PDB, pdb2: &PDB) -> f64 {
 }
 
 /// Compute the distance between two structure with different methods (RMSD, TMscore...)
-fn compute_distance(pdb1: &PDB, pdb2: &PDB, mode: &str) -> f64 {
+fn compute_distance(pdb1: &PDB, pdb2: &PDB, mode: &str, rmsd_chains: &Option<String>) -> f64 {
     match mode {
-        "rmsd-cur" => rmsd(pdb1, pdb2),
-        "tm-score" => tm_score(pdb1, pdb2),
+        "rmsd-cur" => rmsd(pdb1, pdb2, rmsd_chains),
+        "TM-score" => tm_score(pdb1, pdb2),
         _ => {
             println!("No '{mode}' available");
             0.0
@@ -54,6 +68,7 @@ fn compute_distance(pdb1: &PDB, pdb2: &PDB, mode: &str) -> f64 {
     }
 }
 
+//collect_atom_positions_ref
 /// Get all atom's coordinates from a given structure
 fn get_atom_coordinates(pdb: &PDB) -> Vec<Vector3<f64>> {
     pdb.atoms()
@@ -97,7 +112,7 @@ pub fn all_distances(
     pdb_file_names: &[String],
     source_path: &str,
     distance_mode: &str,
-) -> Vec<f64> {
+    rmsd_chains: &Option<String>) -> Vec<f64> {
     println!(
         "Computing {distance_mode} between ref & {} structures\nReference: {}",
         pdb_file_names.len(),
@@ -105,15 +120,23 @@ pub fn all_distances(
     );
     let start = Instant::now();
     let style = default_progress_style();
-    let (pdb1, _errors) = pdbtbx::open(pdb_ref_file).expect("Failed to open reference PDB");
+    //let (pdb1, _errors) = pdbtbx::open(pdb_ref_file).expect("Failed to open reference PDB");
+    let (pdb1, _errors) = ReadOptions::default()
+        .set_level(StrictnessLevel::Loose)
+        .read(pdb_ref_file)
+        .expect("Failed to open reference PDB");
 
     let all_distances: Vec<f64> = pdb_file_names
         .par_iter()
         .progress_with_style(style)
         .map(|pdb_to_compare| {
             let pdb_file = format!("{source_path}/{pdb_to_compare}");
-            let (pdb2, _errors) = pdbtbx::open(&pdb_file).expect("Failed to open second PDB");
-            compute_distance(&pdb1, &pdb2, distance_mode)
+            //let (pdb2, _errors) = pdbtbx::open(&pdb_file).expect("Failed to open second PDB");
+            let (pdb2, _errors) = ReadOptions::default()
+                .set_level(StrictnessLevel::Loose)
+                .read(&pdb_file)
+                .expect(&format!("Failed to open second PDB {}", &pdb_file));
+            compute_distance(&pdb1, &pdb2, distance_mode, rmsd_chains)
         })
         .collect();
 

@@ -57,7 +57,7 @@ fn kabsch(p: &[Vector3<f64>], q: &[Vector3<f64>]) -> Matrix3<f64> {
 }
 
 /// Get the atom coordinates of a selected chains from a structure
-fn collect_atom_positions_ref(pdb: &PDB, chain_group: &str) -> Vec<Vector3<f64>> {
+pub fn collect_atom_positions_ref(pdb: &PDB, chain_group: &str) -> Vec<Vector3<f64>> {
     let positions: Vec<Vector3<f64>> = pdb
         .chains()
         .filter(|chain| chain_group.contains(&chain.id().to_string()))
