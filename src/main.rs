@@ -1,10 +1,20 @@
 use clap::{Parser, Subcommand};
-use csv::{Reader, Writer};
-use massif::*;
 use indexmap::{IndexMap, IndexSet};
+use massif::*;
 use pdbtbx::open;
+use polars::prelude::{
+    CsvReader,
+    CsvWriter,
+    DataFrame,
+    DataType,
+    NamedFrom,
+    SerReader,
+    SerWriter,
+    Series,
+};
 use std::{
     error::Error,
+    fs::File,
     io::{Error as IoError, ErrorKind},
     path::{Path, PathBuf},
 };
@@ -26,21 +36,50 @@ fn structured_csv_path(csv_filename: &str) -> String {
     new_path.to_string_lossy().into_owned()
 }
 
+fn series_to_strings(series: &Series, row_count: usize) -> Result<Vec<String>, Box<dyn Error>> {
+    let utf8_series = if matches!(series.dtype(), DataType::String) {
+        series.clone()
+    } else {
+        series.cast(&DataType::String)?
+    };
+    let chunked = utf8_series.str()?;
+    let mut values = Vec::with_capacity(row_count);
+    for row_idx in 0..row_count {
+        let value = chunked.get(row_idx).unwrap_or("");
+        values.push(value.to_string());
+    }
+    Ok(values)
+}
+
 fn load_structured_rows(path: &str) -> Result<(StructuredRows, IndexSet<String>), Box<dyn Error>> {
     let mut rows = StructuredRows::new();
     let mut header_order = IndexSet::new();
     if !Path::new(path).exists() {
         return Ok((rows, header_order));
     }
-    let mut rdr = Reader::from_path(path)?;
-    let headers = rdr.headers()?.clone();
+    let df = CsvReader::from_path(path)?.has_header(true).finish()?;
+    let headers: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
     for header in headers.iter() {
-        header_order.insert(header.to_string());
+        header_order.insert(header.clone());
     }
     let models_idx = headers.iter().position(|h| h == "Models").unwrap_or(0);
-    for result in rdr.records() {
-        let record = result?;
-        let model_value = record.get(models_idx).unwrap_or("").to_string();
+    let row_count = df.height();
+    let mut columns: Vec<Vec<String>> = Vec::with_capacity(headers.len());
+    for header in headers.iter() {
+        let series = df.column(header)?;
+        let values = series_to_strings(series, row_count)?;
+        columns.push(values);
+    }
+    for row_idx in 0..row_count {
+        let model_value = columns
+            .get(models_idx)
+            .and_then(|col| col.get(row_idx))
+            .cloned()
+            .unwrap_or_default();
         if model_value.is_empty() {
             continue;
         }
@@ -48,8 +87,12 @@ fn load_structured_rows(path: &str) -> Result<(StructuredRows, IndexSet<String>)
             .entry(model_value.clone())
             .or_insert_with(IndexMap::new);
         for (idx, header) in headers.iter().enumerate() {
-            let value = record.get(idx).unwrap_or("").to_string();
-            entry.insert(header.to_string(), value);
+            let value = columns
+                .get(idx)
+                .and_then(|col| col.get(row_idx))
+                .cloned()
+                .unwrap_or_default();
+            entry.insert(header.clone(), value);
         }
     }
     Ok((rows, header_order))
@@ -139,22 +182,33 @@ fn write_structured_csv(
     if !headers.iter().any(|h| h == "Models") {
         headers.insert(0, String::from("Models"));
     }
-    let mut wtr = Writer::from_path(path)?;
-    wtr.write_record(&headers)?;
+    let row_count = rows.len();
+    let mut column_values: Vec<Vec<String>> = headers
+        .iter()
+        .map(|_| Vec::with_capacity(row_count))
+        .collect();
     for (model, metrics) in rows.iter() {
-        let mut row: Vec<String> = Vec::with_capacity(headers.len());
-        for header in headers.iter() {
-            if header == "Models" {
-                row.push(model.clone());
-            } else if let Some(value) = metrics.get(header) {
-                row.push(value.clone());
+        for (idx, header) in headers.iter().enumerate() {
+            let value = if header == "Models" {
+                model.clone()
             } else {
-                row.push(String::new());
+                metrics.get(header).cloned().unwrap_or_default()
+            };
+            if let Some(column) = column_values.get_mut(idx) {
+                column.push(value);
             }
         }
-        wtr.write_record(row)?;
     }
-    wtr.flush()?;
+    let series: Vec<Series> = headers
+        .iter()
+        .zip(column_values)
+        .map(|(header, values)| Series::new(header.as_str(), values))
+        .collect();
+    let mut df = DataFrame::new(series)?;
+    let mut file = File::create(path)?;
+    CsvWriter::new(&mut file)
+        .include_header(true)
+        .finish(&mut df)?;
     println!("Structured CSV file {} written successfully", path);
     Ok(())
 }

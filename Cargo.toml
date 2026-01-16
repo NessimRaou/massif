@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 serde = { version = "*", features = ["derive"] }
 itertools = "*"
-csv = "*"
 clap = { version = "4", features = ["derive"] }
 nalgebra = "0.29"
 pdbtbx = "0.12.0"
@@ -14,6 +13,7 @@ rayon = "1.10.0"
 indicatif = {version = "*", features = ["rayon"]}
 rstar = {version = "*"}
 indexmap = "2"
+polars = { version = "0.39", features = ["csv"] }
 
 [dev-dependencies]
 criterion = "0.3"

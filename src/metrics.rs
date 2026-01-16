@@ -1,12 +1,13 @@
 use std::time::Instant;
 
-use csv::Writer;
 use indicatif::{ParallelProgressIterator, ProgressIterator};
 use nalgebra::Vector3;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::PDB;
 use pdbtbx::{ReadOptions, StrictnessLevel};
+use polars::prelude::{CsvWriter, DataFrame, NamedFrom, SerWriter, Series};
 use rayon::prelude::*;
+use std::fs::File;
 
 use crate::progress::default_progress_style;
 use crate::alignment::collect_atom_positions_ref;
@@ -94,15 +95,20 @@ fn get_alpha_carbon_coords(pdb: &PDB) -> Vec<Vector3<f64>> {
 
 /// Record the results in a CSV file
 fn save_csv(pdbs: &[String], pdb_ref: &str, dists: &[f64], csv_name: &str) {
-    let mut csv_write = Writer::from_path(csv_name).expect("Unable to create csv file");
-    csv_write
-        .write_record(["reference", "target", "distance"])
-        .expect("Unable to write csv header");
-    for (target, dist) in pdbs.iter().zip(dists.iter()) {
-        csv_write
-            .write_record([pdb_ref, target, &dist.to_string()])
-            .expect("Unable to write csv row");
-    }
+    let references: Vec<String> = vec![pdb_ref.to_string(); pdbs.len()];
+    let targets: Vec<String> = pdbs.to_vec();
+    let distances: Vec<f64> = dists.to_vec();
+    let series = vec![
+        Series::new("reference", references),
+        Series::new("target", targets),
+        Series::new("distance", distances),
+    ];
+    let mut df = DataFrame::new(series).expect("Unable to build csv data frame");
+    let mut file = File::create(csv_name).expect("Unable to create csv file");
+    CsvWriter::new(&mut file)
+        .include_header(true)
+        .finish(&mut df)
+        .expect("Unable to write csv data");
 }
 
 /// Compute the distance (RMSD, TMscore...) between a reference structure
