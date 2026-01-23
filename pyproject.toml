@@ -9,6 +9,12 @@ description = "Fast analysis of massive-scale data produced with MassiveFold"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [{ name = "Nessim Raouraoua" }]
+licence = {text = "CeCILL-2.1"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
+]
 
 [project.scripts]
 massif = "massif:run_cli"
