@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "massif"
+version = "0.1.0"
+description = "Fast analysis of massive-scale data produced with MassiveFold"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Nessim Raouraoua" }]
+
+[project.scripts]
+massif = "massif:run_cli"
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["python"]

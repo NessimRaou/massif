@@ -81,6 +81,37 @@ massif <STRUCTURE_DIR> <OUTPUT_CSV> scoring
 ```
 - Currently returns a vector of `1.0` for each model and does not write extra columns
 
+## Python Package
+Massif can also be installed as a Python extension module via `pip` (requires a Rust toolchain).
+```bash
+python -m pip install .
+```
+
+Example usage:
+```python
+import massif
+
+files = massif.structure_files("path/to/structures")
+distances = massif.distances(
+    "path/to/structures",
+    "path/to/reference.pdb",
+    distance_mode="TM-score",
+)
+```
+
+Notes:
+- `massif.distances` writes a CSV report in the current working directory.
+- Functions print progress output to stdout while running.
+- `pip install` also exposes a `massif` console script that runs the Rust CLI.
+
+### Python-installed CLI
+After `pip install`, the `massif` command is available in your environment and uses the same CLI
+syntax as the Rust binary:
+```bash
+massif --help
+massif <STRUCTURE_DIR> <OUTPUT_CSV> fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS>
+```
+
 ## Output Layout
 - `<OUTPUT_CSV>_alternative.csv`: structured report with stable column ordering that merges new results with previous runs
 - Aligned structures (when using `fit`) are written to the provided `OUTPUT_DIR`

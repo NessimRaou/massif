@@ -3,6 +3,13 @@ name = "massif"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+python = ["pyo3"]
+
 [dependencies]
 serde = { version = "*", features = ["derive"] }
 itertools = "*"
@@ -14,6 +21,7 @@ indicatif = {version = "*", features = ["rayon"]}
 rstar = {version = "*"}
 indexmap = "2"
 polars = { version = "0.39", features = ["csv"] }
+pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
 
 [dev-dependencies]
 criterion = "0.3"
