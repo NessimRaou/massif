@@ -248,6 +248,12 @@ fn report_to_csv_structured(
     Ok(())
 }
 
+#[derive(clap::Args)]
+struct CommonArgs {
+    structure_dir: String,
+    output_csv: String,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Fit the structures on a given reference and computes their distance to it.
@@ -261,11 +267,15 @@ enum Commands {
         #[arg(value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
         metric: String,
         rmsd_chains: Option<String>,
+        #[command(flatten)]
+        common: CommonArgs,
     },
     /// Complete analysis on contacts.
     Contacts {
         /// Path to store the aligned structures
         output_dir: String,
+        #[command(flatten)]
+        common: CommonArgs,
     },
     /// Compute the plddt at the interface between two group of chains.
     Iplddt {
@@ -275,12 +285,19 @@ enum Commands {
         aggregate_2: String,
         /// Distance threshold between two residues to count as interface
         threshold: String,
+        #[command(flatten)]
+        common: CommonArgs,
     },
     Distances {
         filename: String,
         chain_pairs: String,
+        #[command(flatten)]
+        common: CommonArgs,
     },
-    Scoring {},
+    Scoring {
+        #[command(flatten)]
+        common: CommonArgs,
+    },
 }
 
 #[derive(Parser)]
@@ -288,8 +305,6 @@ enum Commands {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    structure_dir: String,
-    output_csv: String,
     /// Compute alignments on single thread instead of multithreaded computations
     #[arg(short, long, default_value_t = false)]
     disable_parallel: bool,
@@ -311,9 +326,6 @@ where
 
 fn run(args: Cli) -> Result<(), Box<dyn Error>> {
     let do_in_parallel = !args.disable_parallel;
-    let structure_dir = args.structure_dir;
-    let file_names = structure_files_from_directory(&structure_dir)?;
-    let output_csv = args.output_csv;
 
     let mut report_colnames: Vec<String> = Vec::new();
     let mut final_report: Vec<Vec<String>> = Vec::new();
@@ -325,7 +337,11 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             chain_ids,
             metric,
             rmsd_chains,
+            common,
         } => {
+            let structure_dir = common.structure_dir;
+            let file_names = structure_files_from_directory(&structure_dir)?;
+            let output_csv = common.output_csv;
             let reference_chain = chain_ids;
             let (pdb1, _errors) = open(&reference_structure)
                 .expect(&format!("Failed to open first PDB {}", &reference_structure));
@@ -376,8 +392,18 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 report_colnames.push(colname);
                 final_report.push(distances_string);
             }
+
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            }
         }
-        Commands::Contacts { output_dir: _ } => {
+        Commands::Contacts { output_dir: _, common, } => {
+            let structure_dir = common.structure_dir;
+            let file_names = structure_files_from_directory(&structure_dir)?;
+            let output_csv = common.output_csv;
+
             let contacts: Vec<Vec<Contact>> = all_contacts(&file_names, &structure_dir);
             let (clash_threshold, clashes_data) = count_clashes(&contacts);
             let clashes_string: Vec<String> =
@@ -390,12 +416,23 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             final_report.push(scores_string);
             println!("{:?}", file_names);
             println!("{:?}", scores);
+
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            }
         }
         Commands::Iplddt {
             aggregate_1,
             aggregate_2,
             threshold,
+            common,
         } => {
+            let structure_dir = common.structure_dir;
+            let file_names = structure_files_from_directory(&structure_dir)?;
+            let output_csv = common.output_csv;
+
             let threshold = threshold
                 .parse::<f64>()
                 .expect("Threshold cannot be cast to f64");
@@ -410,11 +447,22 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 all_iplddt.iter().map(|&num| num.to_string()).collect();
             report_colnames.push(String::from("i-plddt"));
             final_report.push(iplddt_string);
+
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            }
         }
         Commands::Distances {
             filename: _,
             chain_pairs,
+            common,
         } => {
+            let structure_dir = common.structure_dir;
+            let file_names = structure_files_from_directory(&structure_dir)?;
+            let output_csv = common.output_csv;
+
             let distances = all_min_distances(&structure_dir, &file_names);
             let distances: Vec<Vec<ChainDistance>> = distances
                 .iter()
@@ -430,15 +478,19 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     .collect();
                 final_report.push(distances_to_register);
             }
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            }
         }
-        Commands::Scoring {} => {
+        Commands::Scoring { common, } => {
+            let structure_dir = common.structure_dir;
+            let file_names = structure_files_from_directory(&structure_dir)?;
+            let output_csv = common.output_csv;
+
             let _scores = all_scores_computation(&structure_dir, &file_names);
         }
-    }
-    report_colnames.push(String::from("Models"));
-    final_report.push(file_names);
-    if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
-        eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
     }
     Ok(())
 }
