@@ -23,6 +23,7 @@ rstar = {version = "*"}
 indexmap = "2"
 polars = { version = "0.39", features = ["csv"] }
 pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 criterion = "0.3"

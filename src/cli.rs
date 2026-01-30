@@ -27,6 +27,7 @@ use crate::{
     all_scores_computation,
     count_clashes,
     filter_chain_pairs,
+    gather_runs,
     parallel_all_alignment,
     sanitize_data,
     score_interface,
@@ -298,6 +299,27 @@ enum Commands {
         #[command(flatten)]
         common: CommonArgs,
     },
+    /// Gather ranked AlphaFold runs into a consolidated output directory.
+    Gather {
+        /// Path to the runs you want to gather
+        #[arg(long)]
+        runs_path: String,
+        /// List of run names or subdirectories to ignore
+        #[arg(long, num_args = 1..)]
+        ignore: Vec<String>,
+        /// Path to the output of the runs gathering (default: <RUNS_PATH>/all_pdbs)
+        #[arg(long)]
+        output_path: Option<String>,
+        /// Skips the run gathering, only output a csv ranking file
+        #[arg(long, default_value_t = false)]
+        only_ranking: bool,
+        /// If specified, include the .pkl pickle files in the gathered results
+        #[arg(long, default_value_t = false)]
+        include_pickles: bool,
+        /// Include a ranking in the name of the ranked files and mapping CSV
+        #[arg(long, default_value_t = false)]
+        include_rank: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -331,6 +353,27 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
     let mut final_report: Vec<Vec<String>> = Vec::new();
 
     match args.command {
+        Commands::Gather {
+            runs_path,
+            ignore,
+            output_path,
+            only_ranking,
+            include_pickles,
+            include_rank,
+        } => {
+            let runs_path = PathBuf::from(runs_path);
+            let output_path = output_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| runs_path.join("all_pdbs"));
+            gather_runs(
+                &runs_path,
+                &ignore,
+                &output_path,
+                only_ranking,
+                include_pickles,
+                include_rank,
+            )?;
+        }
         Commands::Fit {
             output_dir,
             reference_structure,
