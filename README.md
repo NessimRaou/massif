@@ -32,7 +32,7 @@ After `pip install`, the `massif` command is available in your environment and u
 syntax as the Rust binary:
 ```bash
 massif --help
-massif <STRUCTURE_DIR> <OUTPUT_CSV> fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS>
+massif fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS> <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 
 ### Python Package
@@ -74,7 +74,7 @@ cargo run -- --help
 ## Usage
 Massif expects positional arguments in the following order:
 ```bash
-massif [OPTIONS] <STRUCTURE_DIR> <OUTPUT_CSV> <COMMAND> [COMMAND OPTIONS]
+massif <COMMAND> [COMMAND OPTIONS] <STRUCTURE_DIR> <OUTPUT_CSV> [OPTIONS]
 ```
 - `STRUCTURE_DIR`: directory containing the input PDB/CIF files
 - `OUTPUT_CSV`: base report name; data is currently written to `<OUTPUT_CSV>_alternative.*`
@@ -85,17 +85,19 @@ The `COMMAND` argument selects one of the following subcommands:
 ### `fit`
 Align every structure against a reference chain, save aligned coordinates, and compute distances (currently TM-score).
 ```bash
-massif <STRUCTURE_DIR> <OUTPUT_CSV> fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS>
+massif fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS> [METRIC] [RMSD_CHAINS] <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - `OUTPUT_DIR`: folder where aligned structures are written
 - `REFERENCE_PDB`: path to the reference structure used for alignment and distance computation
 - `CHAIN_IDS`: concatenated chain identifiers (for example `AB` or `C`) that define the fitting anchor in both reference and target structures
+- `METRIC` (optional): `TM-score` (default) or `rmsd-cur`
+- `RMSD_CHAINS` (optional): chain group used when `rmsd-cur` is selected (for example `AB`)
 - Output columns: `TM-score to <reference>` plus `Models`
 
 ### `contacts`
 Characterise interface contacts and clashes across the ensemble.
 ```bash
-massif <STRUCTURE_DIR> <OUTPUT_CSV> contacts <OUTPUT_DIR>
+massif contacts <OUTPUT_DIR> <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - Reports the number of atomic clashes per model and prints the automatic exclusion threshold (mean + 2×SD)
 - Adds interface score placeholders (future integration of pTM/ipTM based scoring)
@@ -104,7 +106,7 @@ massif <STRUCTURE_DIR> <OUTPUT_CSV> contacts <OUTPUT_DIR>
 ### `iplddt`
 Compute the mean pLDDT over residues at a user-defined interface.
 ```bash
-massif <STRUCTURE_DIR> <OUTPUT_CSV> iplddt <AGGREGATE_1> <AGGREGATE_2> <THRESHOLD>
+massif iplddt <AGGREGATE_1> <AGGREGATE_2> <THRESHOLD> <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - `AGGREGATE_1` / `AGGREGATE_2`: chain groups (for example `AB` vs `C`)
 - `THRESHOLD`: distance cutoff (Å) between atoms to treat residues as contacting
@@ -113,7 +115,7 @@ massif <STRUCTURE_DIR> <OUTPUT_CSV> iplddt <AGGREGATE_1> <AGGREGATE_2> <THRESHOL
 ### `distances`
 Measure minimal distances between every pair of chains and optionally retain a subset.
 ```bash
-massif <STRUCTURE_DIR> <OUTPUT_CSV> distances <FILENAME> <CHAIN_PAIRS>
+massif distances <FILENAME> <CHAIN_PAIRS> <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - `FILENAME`: reserved for future use (currently ignored)
 - `CHAIN_PAIRS`: comma-separated list (for example `AB,AC,BC`); each pair becomes a CSV column
@@ -122,7 +124,7 @@ massif <STRUCTURE_DIR> <OUTPUT_CSV> distances <FILENAME> <CHAIN_PAIRS>
 ### `scoring`
 Placeholder for future scoring pipelines.
 ```bash
-massif <STRUCTURE_DIR> <OUTPUT_CSV> scoring
+massif scoring <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - Currently returns a vector of `1.0` for each model and does not write extra columns
 
