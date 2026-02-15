@@ -1,5 +1,6 @@
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pdbtbx::Element;
 
 use crate::cli;
 use crate::alignment::{all_alignment, parallel_all_alignment};
@@ -73,6 +74,9 @@ fn align(
             .join("; ");
         PyIOError::new_err(message)
     })?;
+    let mut pdb1 = pdb1;
+    pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
+    pdb1.full_sort();
     if parallel {
         parallel_all_alignment(
             &filenames,

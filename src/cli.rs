@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
-use pdbtbx::open;
+use pdbtbx::{open, Element};
 use polars::prelude::{
     CsvReader,
     CsvWriter,
@@ -264,8 +264,9 @@ enum Commands {
         reference_structure: String,
         /// Aggregated identifiers of the chains used for the fitting (e.g. "AB" or "C")
         chain_ids: String,
-        #[arg(value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
+        #[arg(short, long, value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
         metric: String,
+        #[arg(short, long)]
         rmsd_chains: Option<String>,
         #[command(flatten)]
         common: CommonArgs,
@@ -345,6 +346,9 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let reference_chain = chain_ids;
             let (pdb1, _errors) = open(&reference_structure)
                 .expect(&format!("Failed to open first PDB {}", &reference_structure));
+            let mut pdb1 = pdb1;
+            pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
+            pdb1.full_sort();
             if do_in_parallel {
                 parallel_all_alignment(
                     &file_names,

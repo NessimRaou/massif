@@ -2,7 +2,7 @@ use std::{fs, io, process, time::Instant};
 
 use indicatif::{ParallelProgressIterator, ProgressIterator};
 use nalgebra::{Matrix3, Vector3};
-use pdbtbx::{save, TransformationMatrix, PDB};
+use pdbtbx::{save, Element, TransformationMatrix, PDB};
 use rayon::prelude::*;
 
 use crate::progress::default_progress_style;
@@ -168,6 +168,8 @@ pub fn all_alignment(
         .for_each(|pdb_to_align| {
             let input_name = format!("{source_path}/{pdb_to_align}");
             let (mut pdb2, _errors) = pdbtbx::open(&input_name).expect("Failed to open second PDB");
+            pdb2.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
+            pdb2.full_sort();
             align_structures_ref(
                 reference_structure,
                 &mut pdb2,
@@ -202,6 +204,8 @@ pub fn parallel_all_alignment(
         .for_each(|pdb_to_align| {
             let input_name = format!("{source_path}/{pdb_to_align}");
             let (mut pdb2, _errors) = pdbtbx::open(&input_name).expect("Failed to open second PDB");
+            pdb2.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
+            pdb2.full_sort();
             align_structures_ref(
                 reference_structure,
                 &mut pdb2,
