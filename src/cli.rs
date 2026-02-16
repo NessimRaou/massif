@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
-use pdbtbx::{open, Element};
+use pdbtbx::{open, Element, save};
 use polars::prelude::{
     CsvReader,
     CsvWriter,
@@ -349,6 +349,17 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let mut pdb1 = pdb1;
             pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
             pdb1.full_sort();
+
+            // save the modified reference pdb in output_dir
+            let ref_filename = Path::new(&reference_structure)
+                .file_name().unwrap()
+                .to_str().unwrap()
+                .to_string();
+            let output_ref = format!("{output_dir}/{ref_filename}");
+            save(&pdb1, &output_ref, pdbtbx::StrictnessLevel::Loose)
+                .expect("Failed to save aligned PDB");
+            println!("Reference structure saved as {}", output_ref);
+
             if do_in_parallel {
                 parallel_all_alignment(
                     &file_names,
