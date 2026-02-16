@@ -235,12 +235,17 @@ fn interface_scores(
 /// Run the Rust CLI using process arguments or a provided list.
 #[pyfunction(signature = (args=None, /))]
 fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
-    if let Some(mut argv) = args {
+    let argv = if let Some(mut argv) = args {
         argv.insert(0, String::from("massif"));
-        cli::run_from_args(argv).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+        argv
     } else {
-        cli::run_from_env().map_err(|err| PyRuntimeError::new_err(err.to_string()))
-    }
+        Python::with_gil(|py| -> PyResult<Vec<String>> {
+            let sys = py.import("sys")?;
+            let argv: Vec<String> = sys.getattr("argv")?.extract()?;
+            Ok(argv)
+        })?
+    };
+    cli::run_from_args(argv).map_err(|err| PyRuntimeError::new_err(err.to_string()))
 }
 
 #[pymodule]
