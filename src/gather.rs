@@ -69,10 +69,13 @@ fn read_order_from_ranking(path: &Path) -> Result<Vec<String>, Box<dyn Error>> {
 
 fn read_score_map(path: &Path) -> Result<(String, IndexMap<String, f64>), Box<dyn Error>> {
     let obj = read_json_object(path)?;
-    let (score_key, scores_val) = obj.iter().next().ok_or_else(|| {
+    let (score_key, scores_val) = obj
+        .iter()
+        .find(|(key, value)| key.as_str() != "order" && value.is_object())
+        .ok_or_else(|| {
         Box::new(IoError::new(
             ErrorKind::InvalidData,
-            "Ranking JSON is empty",
+            "Ranking JSON has no metric scores object",
         )) as Box<dyn Error>
     })?;
     let scores_obj = scores_val.as_object().ok_or_else(|| {
