@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{ParallelProgressIterator};
 use nalgebra::Point3;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::ContainsAtomConformerResidue;
 use pdbtbx::ContainsAtomConformerResidueChain;
-use pdbtbx::{AtomConformerResidueChainModel, PDB};
+use pdbtbx::{AtomConformerResidueChainModel};
 
 use rayon::prelude::*;
 
 use crate::progress::default_progress_style;
 
+/// Process inspired from Pierce Lab
+/// https://github.com/piercelab/alphafold_v2.2_customize/blob/master/get_interface_plddt.pl
 /// Compute the plddt at the user-specified interface
 pub fn compute_interface_plddt(
     pdb_file: &str,
