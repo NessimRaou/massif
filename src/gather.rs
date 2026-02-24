@@ -1,15 +1,17 @@
 use indexmap::IndexMap;
 use polars::prelude::{
-    CsvReader, CsvWriter, DataFrame, DataFrameJoinOps, JoinArgs, JoinType, NamedFrom, SerReader,
-    SerWriter, Series, SortMultipleOptions,
+    CsvReader, CsvWriter, DataFrame, DataFrameJoinOps, DataType, JoinArgs, JoinType, NamedFrom,
+    SerReader, SerWriter, Series, SortMultipleOptions,
 };
+use rayon::prelude::*;
 use serde_json::Value;
 use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
     io::{Error as IoError, ErrorKind, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    time::Instant,
 };
 use std::env;
 
@@ -279,6 +281,64 @@ fn merge_metric_frames(base: DataFrame, other: &DataFrame) -> Result<DataFrame, 
     )?)
 }
 
+fn make_missing_series(name: &str, dtype: &DataType, len: usize) -> Series {
+    match dtype {
+        DataType::Float64 => Series::new(name, vec![f64::NAN; len]),
+        DataType::Float32 => Series::new(name, vec![f32::NAN; len]),
+        _ => Series::full_null(name, len, dtype),
+    }
+}
+
+fn align_frames_for_vstack(
+    base: &mut DataFrame,
+    incoming: &mut DataFrame,
+) -> Result<(), Box<dyn Error>> {
+    let base_cols: Vec<String> = base
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let incoming_cols: Vec<String> = incoming
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+    for col in base_cols.iter() {
+        if !incoming_cols.contains(col) {
+            let dtype = base.column(col)?.dtype().clone();
+            incoming.with_column(make_missing_series(col, &dtype, incoming.height()))?;
+        }
+    }
+
+    let updated_base_cols: Vec<String> = base
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let updated_incoming_cols: Vec<String> = incoming
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+    for col in updated_incoming_cols.iter() {
+        if !updated_base_cols.contains(col) {
+            let dtype = incoming.column(col)?.dtype().clone();
+            base.with_column(make_missing_series(col, &dtype, base.height()))?;
+        }
+    }
+
+    let final_order: Vec<String> = base
+        .get_column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    *incoming = incoming.select(final_order)?;
+
+    Ok(())
+}
+
 fn add_iptm_ptm_column(df: &mut DataFrame) -> Result<(), Box<dyn Error>> {
     let iptm = df.column("iptm")?.f64()?;
     let ptm = df.column("ptm")?.f64()?;
@@ -394,6 +454,7 @@ fn create_global_ranking(
 
         all_runs_ranking = match all_runs_ranking {
             Some(mut df) => {
+                align_frames_for_vstack(&mut df, &mut run_ranking)?;
                 df.vstack_mut(&run_ranking)?;
                 Some(df)
             }
@@ -555,6 +616,131 @@ fn merge_iplddt_data(
     Ok(joined)
 }
 
+struct CopyTask {
+    structure_src: PathBuf,
+    structure_dst: PathBuf,
+    pickle_src: Option<PathBuf>,
+    pickle_dst: Option<PathBuf>,
+}
+
+fn copy_single_task(task: &CopyTask) -> Result<u64, IoError> {
+    let copied_bytes = fs::copy(&task.structure_src, &task.structure_dst)?;
+    if let (Some(src), Some(dst)) = (&task.pickle_src, &task.pickle_dst) {
+        let _ = fs::copy(src, dst);
+    }
+    Ok(copied_bytes)
+}
+
+fn copy_task_batch(tasks: &[CopyTask], workers: usize) -> Result<u64, IoError> {
+    if workers <= 1 || tasks.len() <= 1 {
+        return tasks
+            .iter()
+            .try_fold(0_u64, |acc, task| copy_single_task(task).map(|bytes| acc + bytes));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map_err(|err| IoError::new(ErrorKind::Other, err.to_string()))?;
+
+    pool.install(|| {
+        tasks
+            .par_iter()
+            .map(copy_single_task)
+            .try_reduce(|| 0_u64, |a, b| Ok(a + b))
+    })
+}
+
+fn copy_tasks_adaptive(tasks: &[CopyTask]) -> Result<(), Box<dyn Error>> {
+    if tasks.is_empty() {
+        return Ok(());
+    }
+
+    let hw_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let half_threads_cap = std::cmp::max(1, hw_threads / 2);
+    let max_workers = std::cmp::min(half_threads_cap, tasks.len().max(1));
+    let mut workers = 1usize;
+    let batch_size = 32;
+    let mut idx = 0;
+    let decision_window_batches = 3usize;
+    let mut previous_window_median: Option<f64> = None;
+    let mut window_throughputs: Vec<f64> = Vec::with_capacity(decision_window_batches);
+    let stagnation_tolerance = 0.15f64;
+    let mut consecutive_stagnation_windows = 0usize;
+    let mut last_action_was_increase = false;
+    let mut total_batch_workers = 0.0f64;
+    let mut total_batch_throughput = 0.0f64;
+    let mut total_batches = 0usize;
+
+    while idx < tasks.len() {
+        let end = std::cmp::min(idx + batch_size, tasks.len());
+        let batch = &tasks[idx..end];
+        let start = Instant::now();
+        let copied_bytes = copy_task_batch(batch, workers)?;
+        let elapsed_s = start.elapsed().as_secs_f64().max(1e-6);
+        let throughput = copied_bytes as f64 / elapsed_s;
+        total_batch_workers += workers as f64;
+        total_batch_throughput += throughput;
+        total_batches += 1;
+        window_throughputs.push(throughput);
+
+        if window_throughputs.len() == decision_window_batches {
+            let mut sorted_window = window_throughputs.clone();
+            sorted_window.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let current_window_median = sorted_window[decision_window_batches / 2];
+            let previous_workers = workers;
+
+            if let Some(previous) = previous_window_median {
+                let lower = previous * (1.0 - stagnation_tolerance);
+                let upper = previous * (1.0 + stagnation_tolerance);
+                if current_window_median < lower {
+                    workers = std::cmp::max(1, workers.saturating_sub(2));
+                    consecutive_stagnation_windows = 0;
+                    last_action_was_increase = false;
+                } else if current_window_median <= upper {
+                    if last_action_was_increase {
+                        workers = std::cmp::max(1, workers.saturating_sub(1));
+                        consecutive_stagnation_windows = 0;
+                        last_action_was_increase = false;
+                    } else {
+                        consecutive_stagnation_windows += 1;
+                        if consecutive_stagnation_windows >= 2 {
+                            workers = std::cmp::min(max_workers, workers + 1);
+                            consecutive_stagnation_windows = 0;
+                        }
+                    }
+                } else {
+                    workers = std::cmp::min(max_workers, workers + 2);
+                    consecutive_stagnation_windows = 0;
+                    last_action_was_increase = workers > previous_workers;
+                }
+            } else {
+                workers = std::cmp::min(max_workers, workers + 2);
+                consecutive_stagnation_windows = 0;
+                last_action_was_increase = workers > previous_workers;
+            }
+
+            previous_window_median = Some(current_window_median);
+            window_throughputs.clear();
+        }
+
+        idx = end;
+    }
+
+    if total_batches > 0 {
+        let mean_workers = total_batch_workers / total_batches as f64;
+        let mean_perf_mib_s = (total_batch_throughput / total_batches as f64) / (1024.0 * 1024.0);
+        println!(
+            "Speed on avg: {:.2} MiB/s",
+            mean_perf_mib_s
+        );
+    }
+
+    Ok(())
+}
+
 fn move_and_rename(
     all_runs_path: &Path,
     run_names: &IndexMap<String, String>,
@@ -582,6 +768,7 @@ fn move_and_rename(
     let mut predictions: Vec<String> = Vec::new();
     let mut mapped_names: Vec<String> = Vec::new();
     let mut score_values: Vec<f64> = Vec::new();
+    let mut copy_tasks: Vec<CopyTask> = Vec::with_capacity(ranking.height());
 
     for idx in 0..ranking.height() {
         let run_name = parameters.get(idx).unwrap_or("");
@@ -619,7 +806,8 @@ fn move_and_rename(
             mapped_names.push(Path::new(&pdb_file).to_string_lossy().to_string());
         }
         let new_pdb_path = output_path.join(&pdb_file);
-        fs::copy(&old_pdb_path, &new_pdb_path)?;
+        let mut pickle_src: Option<PathBuf> = None;
+        let mut pickle_dst: Option<PathBuf> = None;
 
         if include_pickles {
             let prediction_name = format!("{run_name}_{model_name}");
@@ -633,11 +821,19 @@ fn move_and_rename(
             if pickles_path.join("light_pkl").is_dir() {
                 pickles_path = pickles_path.join("light_pkl");
             }
-            let old_pkl_path = pickles_path.join(format!("result_{model_name}.pkl"));
-            let new_pkl_path = output_path.join(format!("{prediction_name}.pkl"));
-            let _ = fs::copy(&old_pkl_path, &new_pkl_path);
+            pickle_src = Some(pickles_path.join(format!("result_{model_name}.pkl")));
+            pickle_dst = Some(output_path.join(format!("{prediction_name}.pkl")));
         }
+
+        copy_tasks.push(CopyTask {
+            structure_src: old_pdb_path,
+            structure_dst: new_pdb_path,
+            pickle_src,
+            pickle_dst,
+        });
     }
+
+    copy_tasks_adaptive(&copy_tasks)?;
 
     if include_rank {
         let mut mapping = DataFrame::new(vec![
