@@ -58,19 +58,47 @@ fn kabsch(p: &[Vector3<f64>], q: &[Vector3<f64>]) -> Matrix3<f64> {
 
 /// Get the atom coordinates of a selected chains from a structure
 pub fn collect_atom_positions_ref(pdb: &PDB, chain_group: &str) -> Vec<Vector3<f64>> {
-    let positions: Vec<Vector3<f64>> = pdb
-        .chains()
-        .filter(|chain| chain_group.contains(&chain.id().to_string()))
-        .flat_map(|chain| {
-            chain.atoms().map(|atom| {
-                let (x, y, z) = atom.pos();
-                Vector3::new(x, y, z)
-            })
-        })
-        .collect();
+    let chain_ids: Vec<String> = if chain_group.chars().any(|c| c == ',' || c.is_whitespace()) {
+        chain_group
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|id| !id.is_empty())
+            .map(|id| id.to_string())
+            .collect()
+    } else {
+        chain_group.chars().map(|c| c.to_string()).collect()
+    };
 
-    if positions.is_empty() {
-        println!("One chain from chain group: {chain_group} not found in one PDB");
+    let mut positions: Vec<Vector3<f64>> = Vec::new();
+    let mut missing_chains: Vec<String> = Vec::new();
+
+    for chain_id in chain_ids {
+        let Some(chain) = pdb
+            .chains()
+            .find(|chain| chain.id() == chain_id.as_str())
+        else {
+            missing_chains.push(chain_id);
+            continue;
+        };
+
+        for residue in chain.residues() {
+            let mut atoms: Vec<_> = residue.atoms().collect();
+            atoms.sort_by(|a, b| a.name().cmp(b.name()));
+            for atom in atoms {
+                let (x, y, z) = atom.pos();
+                positions.push(Vector3::new(x, y, z));
+            }
+        }
+    }
+
+    if !missing_chains.is_empty() || positions.is_empty() {
+        if missing_chains.is_empty() {
+            println!("No atoms found for chain group: {chain_group}");
+        } else {
+            println!(
+                "Chain(s) {:?} from chain group: {chain_group} not found in one PDB",
+                missing_chains
+            );
+        }
         process::exit(1);
     }
 

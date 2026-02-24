@@ -349,6 +349,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let mut pdb1 = pdb1;
             pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
             pdb1.full_sort();
+            pdb1.renumber();
 
             // save the modified reference pdb in output_dir
             let ref_filename = Path::new(&reference_structure)
