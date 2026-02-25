@@ -730,7 +730,6 @@ fn copy_tasks_adaptive(tasks: &[CopyTask]) -> Result<(), Box<dyn Error>> {
     }
 
     if total_batches > 0 {
-        let mean_workers = total_batch_workers / total_batches as f64;
         let mean_perf_mib_s = (total_batch_throughput / total_batches as f64) / (1024.0 * 1024.0);
         println!(
             "Speed on avg: {:.2} MiB/s",
