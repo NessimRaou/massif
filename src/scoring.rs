@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{ParallelProgressIterator};
 use rayon::prelude::*;
 
 use crate::progress::default_progress_style;

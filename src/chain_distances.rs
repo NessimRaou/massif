@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{ParallelProgressIterator};
 use pdbtbx::Atom;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::ContainsAtomConformerResidueChain;

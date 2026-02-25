@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{ParallelProgressIterator};
 use nalgebra::Vector3;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::PDB;

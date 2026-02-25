@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{ParallelProgressIterator};
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::ContainsAtomConformerResidue;
 use pdbtbx::ContainsAtomConformerResidueChain;
-use pdbtbx::{Element, PDB};
+use pdbtbx::{Element};
 use rayon::prelude::*;
 
 use crate::progress::default_progress_style;
