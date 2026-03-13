@@ -100,6 +100,8 @@ fn align(
 }
 
 /// Align structures to a reference chain and compute TM-score or RMSD distances.
+/// `distance_chains` optionally restricts the distance computation to a chain group
+/// for both metrics.
 #[pyfunction(signature = (
     structure_dir,
     output_dir,
@@ -107,7 +109,7 @@ fn align(
     chain_ids,
     *,
     metric="TM-score",
-    rmsd_chains=None,
+    distance_chains=None,
     file_names=None,
     parallel=true,
     transformation_method="per_atom"
@@ -118,7 +120,7 @@ fn fit(
     reference_structure: &str,
     chain_ids: &str,
     metric: &str,
-    rmsd_chains: Option<String>,
+    distance_chains: Option<String>,
     file_names: Option<Vec<String>>,
     parallel: bool,
     transformation_method: &str,
@@ -139,25 +141,27 @@ fn fit(
         &filenames,
         output_dir,
         metric,
-        &rmsd_chains,
+        &distance_chains,
     ))
 }
 
 /// Compute TM-score or RMSD distances against a reference without alignment.
+/// `distance_chains` optionally restricts the distance computation to a chain group
+/// for both metrics.
 /// Note: this writes a CSV report in the current working directory.
 #[pyfunction(signature = (
     structure_dir,
     reference_structure,
     *,
     distance_mode="TM-score",
-    rmsd_chains=None,
+    distance_chains=None,
     file_names=None
 ))]
 fn distances(
     structure_dir: &str,
     reference_structure: &str,
     distance_mode: &str,
-    rmsd_chains: Option<String>,
+    distance_chains: Option<String>,
     file_names: Option<Vec<String>>,
 ) -> PyResult<Vec<f64>> {
     validate_distance_mode(distance_mode)?;
@@ -167,7 +171,7 @@ fn distances(
         &filenames,
         structure_dir,
         distance_mode,
-        &rmsd_chains,
+        &distance_chains,
     ))
 }
 

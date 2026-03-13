@@ -85,13 +85,13 @@ The `COMMAND` argument selects one of the following subcommands:
 ### `fit`
 Align every structure against a reference chain, save aligned coordinates, and compute distances (currently TM-score).
 ```bash
-massif fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS> [METRIC] [RMSD_CHAINS] <STRUCTURE_DIR> <OUTPUT_CSV>
+massif fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS> [METRIC] [DISTANCE_CHAINS] <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
 - `OUTPUT_DIR`: folder where aligned structures are written
 - `REFERENCE_PDB`: path to the reference structure used for alignment and distance computation
 - `CHAIN_IDS`: concatenated chain identifiers (for example `AB` or `C`) that define the fitting anchor in both reference and target structures
 - `METRIC` (optional): `TM-score` (default) or `rmsd-cur`
-- `RMSD_CHAINS` (optional): chain group used when `rmsd-cur` is selected (for example `AB`)
+- `DISTANCE_CHAINS` (optional): chain group used for the post-fit distance computation, including both `rmsd-cur` and `TM-score` (for example `AB`)
 - Output columns: `TM-score to <reference>` plus `Models`
 
 ### `contacts`

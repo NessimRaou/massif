@@ -266,8 +266,10 @@ enum Commands {
         chain_ids: String,
         #[arg(short, long, value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
         metric: String,
+        /// Optional chain group used when computing the post-fit distance metric
+        /// (for example "AB" for either `rmsd-cur` or `TM-score`)
         #[arg(short, long)]
-        rmsd_chains: Option<String>,
+        distance_chains: Option<String>,
         #[command(flatten)]
         common: CommonArgs,
     },
@@ -337,7 +339,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             reference_structure,
             chain_ids,
             metric,
-            rmsd_chains,
+            distance_chains,
             common,
         } => {
             let structure_dir = common.structure_dir;
@@ -388,11 +390,11 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     &file_names,
                     &output_dir,
                     dtype,
-                    &rmsd_chains,
+                    &distance_chains,
                 );
                 let distances_string: Vec<String> =
                     distances.iter().map(|&num| num.to_string()).collect();
-                let chain_names = match rmsd_chains {
+                let chain_names = match distance_chains {
                     Some(chain_group) => format!(" ({})", &chain_group),
                     None => String::from(""),
                 };

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{process, time::Instant};
 
 use indicatif::{ParallelProgressIterator};
 use nalgebra::Vector3;
@@ -9,15 +9,24 @@ use polars::prelude::{CsvWriter, DataFrame, NamedFrom, SerWriter, Series};
 use rayon::prelude::*;
 use std::fs::File;
 
-use crate::progress::default_progress_style;
 use crate::alignment::collect_atom_positions_ref;
+use crate::progress::default_progress_style;
 
 /// Compute TM score between two structure
-fn tm_score(pdb1: &PDB, pdb2: &PDB) -> f64 {
-    let l = pdb1.residue_count() as f64;
-    let d0 = 1.24 * f64::cbrt(l - 15.0) - 1.8;
-    let pdb1_ca_coord = get_alpha_carbon_coords(pdb1);
-    let pdb2_ca_coord = get_alpha_carbon_coords(pdb2);
+fn tm_score(pdb1: &PDB, pdb2: &PDB, distance_chains: &Option<String>) -> f64 {
+    let (pdb1_ca_coord, pdb2_ca_coord) = match distance_chains {
+        Some(chain_group) => (
+            get_alpha_carbon_coords_for_chain_group(pdb1, chain_group),
+            get_alpha_carbon_coords_for_chain_group(pdb2, chain_group),
+        ),
+        None => (get_alpha_carbon_coords(pdb1), get_alpha_carbon_coords(pdb2)),
+    };
+    let l = pdb1_ca_coord.len() as f64;
+    if l == 0.0 {
+        return 0.0;
+    }
+    // Clamp d0 for short selections so TM-score stays defined on small chain subsets.
+    let d0 = (1.24 * f64::cbrt((l - 15.0).max(0.0)) - 1.8).max(0.5);
     let tm_score_sum: f64 = pdb1_ca_coord
         .iter()
         .zip(pdb2_ca_coord.iter())
@@ -31,8 +40,8 @@ fn tm_score(pdb1: &PDB, pdb2: &PDB) -> f64 {
 }
 
 /// Compute RMSD between two structure
-fn rmsd(pdb1: &PDB, pdb2: &PDB, rmsd_chains: &Option<String>) -> f64 {
-    let (pdb1_coord, pdb2_coord) = match rmsd_chains {
+fn rmsd(pdb1: &PDB, pdb2: &PDB, distance_chains: &Option<String>) -> f64 {
+    let (pdb1_coord, pdb2_coord) = match distance_chains {
         Some(chain_group) => {
             (
                 collect_atom_positions_ref(pdb1, chain_group),
@@ -58,10 +67,10 @@ fn rmsd(pdb1: &PDB, pdb2: &PDB, rmsd_chains: &Option<String>) -> f64 {
 }
 
 /// Compute the distance between two structure with different methods (RMSD, TMscore...)
-fn compute_distance(pdb1: &PDB, pdb2: &PDB, mode: &str, rmsd_chains: &Option<String>) -> f64 {
+fn compute_distance(pdb1: &PDB, pdb2: &PDB, mode: &str, distance_chains: &Option<String>) -> f64 {
     match mode {
-        "rmsd-cur" => rmsd(pdb1, pdb2, rmsd_chains),
-        "TM-score" => tm_score(pdb1, pdb2),
+        "rmsd-cur" => rmsd(pdb1, pdb2, distance_chains),
+        "TM-score" => tm_score(pdb1, pdb2, distance_chains),
         _ => {
             println!("No '{mode}' available");
             0.0
@@ -93,6 +102,52 @@ fn get_alpha_carbon_coords(pdb: &PDB) -> Vec<Vector3<f64>> {
         .collect()
 }
 
+fn parse_chain_group(chain_group: &str) -> Vec<String> {
+    if chain_group.chars().any(|c| c == ',' || c.is_whitespace()) {
+        chain_group
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|id| !id.is_empty())
+            .map(|id| id.to_string())
+            .collect()
+    } else {
+        chain_group.chars().map(|c| c.to_string()).collect()
+    }
+}
+
+fn get_alpha_carbon_coords_for_chain_group(pdb: &PDB, chain_group: &str) -> Vec<Vector3<f64>> {
+    let chain_ids = parse_chain_group(chain_group);
+    let mut positions: Vec<Vector3<f64>> = Vec::new();
+    let mut missing_chains: Vec<String> = Vec::new();
+
+    for chain_id in chain_ids {
+        let Some(chain) = pdb.chains().find(|chain| chain.id() == chain_id.as_str()) else {
+            missing_chains.push(chain_id);
+            continue;
+        };
+
+        for residue in chain.residues() {
+            for atom in residue.atoms().filter(|atom| atom.name() == "CA") {
+                let (x, y, z) = atom.pos();
+                positions.push(Vector3::new(x, y, z));
+            }
+        }
+    }
+
+    if !missing_chains.is_empty() || positions.is_empty() {
+        if missing_chains.is_empty() {
+            println!("No alpha carbons found for chain group: {chain_group}");
+        } else {
+            println!(
+                "Chain(s) {:?} from chain group: {chain_group} not found in one PDB",
+                missing_chains
+            );
+        }
+        process::exit(1);
+    }
+
+    positions
+}
+
 /// Record the results in a CSV file
 fn save_csv(pdbs: &[String], pdb_ref: &str, dists: &[f64], csv_name: &str) {
     let references: Vec<String> = vec![pdb_ref.to_string(); pdbs.len()];
@@ -118,7 +173,7 @@ pub fn all_distances(
     pdb_file_names: &[String],
     source_path: &str,
     distance_mode: &str,
-    rmsd_chains: &Option<String>) -> Vec<f64> {
+    distance_chains: &Option<String>) -> Vec<f64> {
     println!(
         "Computing {distance_mode} between ref & {} structures\nReference: {}",
         pdb_file_names.len(),
@@ -142,7 +197,7 @@ pub fn all_distances(
                 .set_level(StrictnessLevel::Loose)
                 .read(&pdb_file)
                 .expect(&format!("Failed to open second PDB {}", &pdb_file));
-            compute_distance(&pdb1, &pdb2, distance_mode, rmsd_chains)
+            compute_distance(&pdb1, &pdb2, distance_mode, distance_chains)
         })
         .collect();
 
