@@ -112,6 +112,19 @@ massif iplddt <AGGREGATE_1> <AGGREGATE_2> <THRESHOLD> <STRUCTURE_DIR> <OUTPUT_CS
 - `THRESHOLD`: distance cutoff (Å) between atoms to treat residues as contacting
 - Returns an `i-plddt` column per model; failures are reported as `-1`
 
+### `cluster`
+Align every structure on a reference, reduce a selected chain group to one 3D point, and assign complete-linkage clusters in the reduced space.
+```bash
+massif cluster <REFERENCE_PDB> <ANCHOR_CHAINS> <REDUCTION_CHAINS> <CUTOFF> <STRUCTURE_DIR> <OUTPUT_CSV> [--aligned-output-dir <OUTPUT_DIR>]
+```
+- `REFERENCE_PDB`: path to the reference structure used for alignment
+- `ANCHOR_CHAINS`: concatenated chain identifiers used as the alignment anchor (for example `AB` or `C`)
+- `REDUCTION_CHAINS`: concatenated chain identifiers whose aligned atoms are averaged into one point per model
+- `CUTOFF`: complete-linkage cutoff (Å) applied to the reduced 3D points
+- `--aligned-output-dir`: optional directory where the aligned reference and aligned models are written
+- Output columns: `point_x`, `point_y`, `point_z`, `cluster_id`, and `Models`
+- When `--aligned-output-dir` is not provided, Massif reuses cached reduced coordinates from the existing structured CSV when possible
+
 ### `distances`
 Measure minimal distances between every pair of chains and optionally retain a subset.
 ```bash
@@ -130,4 +143,4 @@ massif scoring <STRUCTURE_DIR> <OUTPUT_CSV>
 
 ## Output Layout
 - `<OUTPUT_CSV>_alternative.csv`: structured report with stable column ordering that merges new results with previous runs
-- Aligned structures (when using `fit`) are written to the provided `OUTPUT_DIR`
+- Aligned structures are written to the provided `OUTPUT_DIR` for `fit` and to `--aligned-output-dir` for `cluster`
