@@ -15,7 +15,7 @@ use std::{
     error::Error,
     fs::File,
     io::{Error as IoError, ErrorKind},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use crate::{
@@ -34,22 +34,12 @@ use crate::{
     ChainDistance,
     Contact,
 };
+use crate::structure_clustering::run_cluster_workflow;
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
 
-fn structured_csv_path(csv_filename: &str) -> String {
-    let path = Path::new(csv_filename);
-    let mut new_name = path
-        .file_stem()
-        .map(|stem| format!("{}_alternative", stem.to_string_lossy()))
-        .unwrap_or_else(|| String::from("alternative_output"));
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        new_name.push('.');
-        new_name.push_str(ext);
-    }
-    let mut new_path = PathBuf::from(path);
-    new_path.set_file_name(new_name);
-    new_path.to_string_lossy().into_owned()
+pub(crate) fn structured_csv_path(csv_filename: &str) -> String {
+    csv_filename.to_string()
 }
 
 fn series_to_strings(series: &Series, row_count: usize) -> Result<Vec<String>, Box<dyn Error>> {
@@ -67,7 +57,9 @@ fn series_to_strings(series: &Series, row_count: usize) -> Result<Vec<String>, B
     Ok(values)
 }
 
-fn load_structured_rows(path: &str) -> Result<(StructuredRows, IndexSet<String>), Box<dyn Error>> {
+pub(crate) fn load_structured_rows(
+    path: &str,
+) -> Result<(StructuredRows, IndexSet<String>), Box<dyn Error>> {
     let mut rows = StructuredRows::new();
     let mut header_order = IndexSet::new();
     if !Path::new(path).exists() {
@@ -79,13 +71,13 @@ fn load_structured_rows(path: &str) -> Result<(StructuredRows, IndexSet<String>)
         .iter()
         .map(|name| name.to_string())
         .collect();
-    for header in headers.iter() {
+    for header in &headers {
         header_order.insert(header.clone());
     }
     let models_idx = headers.iter().position(|h| h == "Models").unwrap_or(0);
     let row_count = df.height();
     let mut columns: Vec<Vec<String>> = Vec::with_capacity(headers.len());
-    for header in headers.iter() {
+    for header in &headers {
         let series = df.column(header)?;
         let values = series_to_strings(series, row_count)?;
         columns.push(values);
@@ -114,7 +106,7 @@ fn load_structured_rows(path: &str) -> Result<(StructuredRows, IndexSet<String>)
     Ok((rows, header_order))
 }
 
-fn columns_to_structured_rows(
+pub(crate) fn columns_to_structured_rows(
     headers: &[String],
     columns: &[Vec<String>],
 ) -> Result<(StructuredRows, IndexSet<String>), Box<dyn Error>> {
@@ -126,10 +118,10 @@ fn columns_to_structured_rows(
     }
     if headers.len() != columns.len() {
         eprintln!(
-      "Structured CSV: header/data count mismatch (headers: {}, columns: {}); extra columns will be ignored",
-      headers.len(),
-      columns.len()
-    );
+            "Structured CSV: header/data count mismatch (headers: {}, columns: {}); extra columns will be ignored",
+            headers.len(),
+            columns.len()
+        );
     }
     let mut header_order = IndexSet::new();
     for header in headers {
@@ -180,7 +172,7 @@ fn merge_structured_rows(existing: &mut StructuredRows, incoming: StructuredRows
     }
 }
 
-fn write_structured_csv(
+pub(crate) fn write_structured_csv(
     path: &str,
     rows: &StructuredRows,
     header_order: &IndexSet<String>,
@@ -237,7 +229,7 @@ fn report_to_csv_structured(
     let structured_path = structured_csv_path(csv_filename);
     let (mut existing_rows, mut header_order) = load_structured_rows(&structured_path)?;
     let (incoming_rows, incoming_headers) = columns_to_structured_rows(&headers, &table)?;
-    for header in incoming_headers.iter() {
+    for header in &incoming_headers {
         header_order.insert(header.clone());
     }
     if !header_order.contains("Models") {
@@ -288,6 +280,22 @@ enum Commands {
         aggregate_2: String,
         /// Distance threshold between two residues to count as interface
         threshold: String,
+        #[command(flatten)]
+        common: CommonArgs,
+    },
+    /// Align structures, reduce a chain group to one point, and cluster those points.
+    Cluster {
+        /// Structure used as the alignment reference
+        reference_structure: String,
+        /// Aggregated identifiers of the chains used as the alignment anchor (e.g. "AB" or "C")
+        anchor_chains: String,
+        /// Aggregated identifiers of the chains reduced to one average point (e.g. "CD" or "E")
+        reduction_chains: String,
+        /// Complete-linkage cutoff applied in reduced 3D space
+        cutoff: f64,
+        /// Optional directory where aligned reference and models will be written
+        #[arg(long)]
+        aligned_output_dir: Option<String>,
         #[command(flatten)]
         common: CommonArgs,
     },
@@ -472,6 +480,25 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
             }
         }
+        Commands::Cluster {
+            reference_structure,
+            anchor_chains,
+            reduction_chains,
+            cutoff,
+            aligned_output_dir,
+            common,
+        } => {
+            run_cluster_workflow(
+                &reference_structure,
+                &common.structure_dir,
+                &anchor_chains,
+                &reduction_chains,
+                cutoff,
+                do_in_parallel,
+                aligned_output_dir.as_deref(),
+                &common.output_csv,
+            )?;
+        }
         Commands::Distances {
             filename: _,
             chain_pairs,
@@ -505,7 +532,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Scoring { common, } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
-            let output_csv = common.output_csv;
+            let _output_csv = common.output_csv;
 
             let _scores = all_scores_computation(&structure_dir, &file_names);
         }
