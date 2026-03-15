@@ -1,3 +1,5 @@
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap};
 use std::error::Error;
 use std::fs;
 use std::io::{Error as IoError, ErrorKind};
@@ -6,8 +8,9 @@ use std::time::Instant;
 
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressIterator};
 use nalgebra::Vector3;
-use pdbtbx::{save, PDB, ReadOptions, StrictnessLevel};
+use pdbtbx::{save, ReadOptions, StrictnessLevel, PDB};
 use rayon::prelude::*;
+use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
 use crate::alignment::{
     apply_transform, compute_centroid, sanitize_structure, structure_files_from_directory,
@@ -20,6 +23,66 @@ use crate::progress::default_progress_style;
 
 type ClusterResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 type ClusterIndices = Vec<Vec<usize>>;
+const HIGH_VOLUME_AUTO_THRESHOLD: usize = 2_048;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClusterAlgorithm {
+    Auto,
+    Primitive,
+    HighVolume,
+}
+
+impl ClusterAlgorithm {
+    pub fn resolve(self, point_count: usize) -> Self {
+        match self {
+            Self::Auto if point_count >= HIGH_VOLUME_AUTO_THRESHOLD => Self::HighVolume,
+            Self::Auto => Self::Primitive,
+            algorithm => algorithm,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Primitive => "primitive",
+            Self::HighVolume => "high-volume",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReducedPointWrapper {
+    index: usize,
+    coordinates: [f64; 3],
+}
+
+impl RTreeObject for ReducedPointWrapper {
+    type Envelope = AABB<[f64; 3]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_point(self.coordinates)
+    }
+}
+
+impl PointDistance for ReducedPointWrapper {
+    fn distance_2(&self, point: &[f64; 3]) -> f64 {
+        let dx = self.coordinates[0] - point[0];
+        let dy = self.coordinates[1] - point[1];
+        let dz = self.coordinates[2] - point[2];
+        dx * dx + dy * dy + dz * dz
+    }
+
+    fn contains_point(&self, point: &[f64; 3]) -> bool {
+        self.distance_2(point) == 0.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClusterEdge {
+    distance_sq: f64,
+    left: usize,
+    right: usize,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReducedPoint {
@@ -193,17 +256,16 @@ fn load_structure(path: &str) -> ClusterResult<PDB> {
 }
 
 fn save_structure(pdb: &PDB, output_path: &str) -> ClusterResult<()> {
-    save(pdb, output_path, StrictnessLevel::Loose)
-        .map_err(|errors| {
-            invalid_data(format!(
-                "failed to save structure '{output_path}': {}",
-                errors
-                    .iter()
-                    .map(|error| error.to_string())
-                    .collect::<Vec<String>>()
-                    .join("; ")
-            ))
-        })?;
+    save(pdb, output_path, StrictnessLevel::Loose).map_err(|errors| {
+        invalid_data(format!(
+            "failed to save structure '{output_path}': {}",
+            errors
+                .iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<String>>()
+                .join("; ")
+        ))
+    })?;
     Ok(())
 }
 
@@ -216,7 +278,11 @@ fn ensure_output_dir(output_dir: &str) -> ClusterResult<()> {
     Ok(())
 }
 
-fn write_aligned_reference(reference: &PDB, reference_path: &str, output_dir: &str) -> ClusterResult<()> {
+fn write_aligned_reference(
+    reference: &PDB,
+    reference_path: &str,
+    output_dir: &str,
+) -> ClusterResult<()> {
     let reference_name = Path::new(reference_path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -240,6 +306,25 @@ pub fn compute_reduced_point(
 }
 
 pub fn complete_linkage_clusters(points: &[ReducedPoint], cutoff: f64) -> Vec<Vec<usize>> {
+    complete_linkage_clusters_with_algorithm(points, cutoff, ClusterAlgorithm::Auto)
+}
+
+pub fn complete_linkage_clusters_with_algorithm(
+    points: &[ReducedPoint],
+    cutoff: f64,
+    algorithm: ClusterAlgorithm,
+) -> Vec<Vec<usize>> {
+    match algorithm.resolve(points.len()) {
+        ClusterAlgorithm::Auto => unreachable!("auto is always resolved before clustering"),
+        ClusterAlgorithm::Primitive => complete_linkage_clusters_primitive(points, cutoff),
+        ClusterAlgorithm::HighVolume => complete_linkage_clusters_high_volume(points, cutoff),
+    }
+}
+
+pub fn complete_linkage_clusters_primitive(
+    points: &[ReducedPoint],
+    cutoff: f64,
+) -> Vec<Vec<usize>> {
     let n_points = points.len();
     if n_points <= 1 {
         return (0..n_points).map(|index| vec![index]).collect();
@@ -313,7 +398,244 @@ pub fn complete_linkage_clusters(points: &[ReducedPoint], cutoff: f64) -> Vec<Ve
     final_clusters
 }
 
-fn build_assignments(points: Vec<ReducedPoint>, clusters: ClusterIndices) -> Vec<ClusterAssignment> {
+fn collect_cutoff_edges(points: &[ReducedPoint], cutoff: f64) -> Vec<ClusterEdge> {
+    let cutoff_sq = cutoff * cutoff;
+    let wrappers: Vec<ReducedPointWrapper> = points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| ReducedPointWrapper {
+            index,
+            coordinates: [point.point.x, point.point.y, point.point.z],
+        })
+        .collect();
+    let tree = RTree::bulk_load(wrappers.clone());
+    let progress = ProgressBar::new(wrappers.len() as u64);
+    progress.set_style(default_progress_style());
+    progress.set_message("cutoff neighbor search");
+
+    let mut edges = Vec::new();
+    for wrapper in &wrappers {
+        for neighbor in tree.locate_within_distance(wrapper.coordinates, cutoff_sq) {
+            if neighbor.index <= wrapper.index {
+                continue;
+            }
+            let dx = wrapper.coordinates[0] - neighbor.coordinates[0];
+            let dy = wrapper.coordinates[1] - neighbor.coordinates[1];
+            let dz = wrapper.coordinates[2] - neighbor.coordinates[2];
+            let distance_sq = dx * dx + dy * dy + dz * dz;
+            if distance_sq <= cutoff_sq {
+                edges.push(ClusterEdge {
+                    distance_sq,
+                    left: wrapper.index,
+                    right: neighbor.index,
+                });
+            }
+        }
+        progress.inc(1);
+    }
+    progress.finish_with_message("cutoff neighbor search complete");
+    edges.sort_unstable_by(|left, right| {
+        left.distance_sq
+            .total_cmp(&right.distance_sq)
+            .then_with(|| left.left.cmp(&right.left))
+            .then_with(|| left.right.cmp(&right.right))
+    });
+    edges
+}
+
+fn find_cluster_root(parent: &mut [usize], index: usize) -> usize {
+    if parent[index] == index {
+        return index;
+    }
+    let root = find_cluster_root(parent, parent[index]);
+    parent[index] = root;
+    root
+}
+
+fn pop_next_eligible_pair(
+    eligible_pairs: &mut BinaryHeap<Reverse<(usize, usize)>>,
+    active: &[bool],
+    cluster_sizes: &[usize],
+    edge_counts: &[HashMap<usize, usize>],
+) -> Option<(usize, usize)> {
+    while let Some(Reverse((left, right))) = eligible_pairs.pop() {
+        if !active[left] || !active[right] {
+            continue;
+        }
+        let required = cluster_sizes[left] * cluster_sizes[right];
+        let Some(&observed) = edge_counts[left].get(&right) else {
+            continue;
+        };
+        if observed == required {
+            return Some((left, right));
+        }
+    }
+    None
+}
+
+fn register_observed_edge(
+    left: usize,
+    right: usize,
+    cluster_sizes: &[usize],
+    edge_counts: &mut [HashMap<usize, usize>],
+    eligible_pairs: &mut BinaryHeap<Reverse<(usize, usize)>>,
+) {
+    let updated = {
+        let left_counts = &mut edge_counts[left];
+        let entry = left_counts.entry(right).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+    {
+        let right_counts = &mut edge_counts[right];
+        right_counts.insert(left, updated);
+    }
+    if updated == cluster_sizes[left] * cluster_sizes[right] {
+        eligible_pairs.push(Reverse((left, right)));
+    }
+}
+
+fn merge_high_volume_clusters(
+    left: usize,
+    right: usize,
+    parent: &mut [usize],
+    active: &mut [bool],
+    cluster_sizes: &mut [usize],
+    clusters: &mut [Vec<usize>],
+    edge_counts: &mut [HashMap<usize, usize>],
+    eligible_pairs: &mut BinaryHeap<Reverse<(usize, usize)>>,
+) {
+    let merged_size = cluster_sizes[left] + cluster_sizes[right];
+    let right_neighbors = std::mem::take(&mut edge_counts[right]);
+
+    parent[right] = left;
+    active[right] = false;
+    cluster_sizes[left] = merged_size;
+    cluster_sizes[right] = 0;
+    let (left_clusters, right_clusters) = clusters.split_at_mut(right);
+    left_clusters[left].append(&mut right_clusters[0]);
+
+    edge_counts[left].remove(&right);
+
+    for (other, right_count) in right_neighbors {
+        if other == left {
+            continue;
+        }
+        {
+            let other_counts = &mut edge_counts[other];
+            other_counts.remove(&right);
+        }
+        if !active[other] {
+            continue;
+        }
+        let merged_count = edge_counts[left].get(&other).copied().unwrap_or(0) + right_count;
+        {
+            let left_counts = &mut edge_counts[left];
+            left_counts.insert(other, merged_count);
+        }
+        {
+            let other_counts = &mut edge_counts[other];
+            other_counts.insert(left, merged_count);
+        }
+        if merged_count == cluster_sizes[left] * cluster_sizes[other] {
+            let pair = if left < other {
+                (left, other)
+            } else {
+                (other, left)
+            };
+            eligible_pairs.push(Reverse(pair));
+        }
+    }
+}
+
+pub fn complete_linkage_clusters_high_volume(
+    points: &[ReducedPoint],
+    cutoff: f64,
+) -> Vec<Vec<usize>> {
+    let n_points = points.len();
+    if n_points <= 1 {
+        return (0..n_points).map(|index| vec![index]).collect();
+    }
+
+    let edges = collect_cutoff_edges(points, cutoff);
+    let mut parent: Vec<usize> = (0..n_points).collect();
+    let mut active = vec![true; n_points];
+    let mut cluster_sizes = vec![1; n_points];
+    let mut clusters: Vec<Vec<usize>> = (0..n_points).map(|index| vec![index]).collect();
+    let mut edge_counts: Vec<HashMap<usize, usize>> =
+        (0..n_points).map(|_| HashMap::new()).collect();
+    let mut eligible_pairs = BinaryHeap::new();
+
+    let progress = ProgressBar::new(edges.len() as u64);
+    progress.set_style(default_progress_style());
+    progress.set_message("high-volume cluster batches");
+
+    let mut edge_index = 0;
+    while edge_index < edges.len() {
+        let current_distance_sq = edges[edge_index].distance_sq;
+        while edge_index < edges.len()
+            && edges[edge_index]
+                .distance_sq
+                .total_cmp(&current_distance_sq)
+                == Ordering::Equal
+        {
+            let edge = edges[edge_index];
+            let left = find_cluster_root(&mut parent, edge.left);
+            let right = find_cluster_root(&mut parent, edge.right);
+            if left != right {
+                let (left, right) = if left < right {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                register_observed_edge(
+                    left,
+                    right,
+                    &cluster_sizes,
+                    &mut edge_counts,
+                    &mut eligible_pairs,
+                );
+            }
+            edge_index += 1;
+        }
+
+        while let Some((left, right)) =
+            pop_next_eligible_pair(&mut eligible_pairs, &active, &cluster_sizes, &edge_counts)
+        {
+            merge_high_volume_clusters(
+                left,
+                right,
+                &mut parent,
+                &mut active,
+                &mut cluster_sizes,
+                &mut clusters,
+                &mut edge_counts,
+                &mut eligible_pairs,
+            );
+        }
+        progress.set_position(edge_index as u64);
+    }
+
+    progress.finish_with_message("high-volume cluster batches complete");
+    let mut final_clusters: Vec<Vec<usize>> = clusters
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, mut cluster)| {
+            if !active[index] {
+                return None;
+            }
+            cluster.sort_unstable();
+            Some(cluster)
+        })
+        .collect();
+    final_clusters.sort_by_key(|cluster| cluster[0]);
+    final_clusters
+}
+
+fn build_assignments(
+    points: Vec<ReducedPoint>,
+    clusters: ClusterIndices,
+) -> Vec<ClusterAssignment> {
     let mut cluster_ids = vec![0; points.len()];
 
     for (cluster_idx, cluster) in clusters.iter().enumerate() {
@@ -334,7 +656,15 @@ fn build_assignments(points: Vec<ReducedPoint>, clusters: ClusterIndices) -> Vec
 }
 
 pub fn assign_clusters(points: Vec<ReducedPoint>, cutoff: f64) -> Vec<ClusterAssignment> {
-    let clusters = complete_linkage_clusters(&points, cutoff);
+    assign_clusters_with_algorithm(points, cutoff, ClusterAlgorithm::Auto)
+}
+
+pub fn assign_clusters_with_algorithm(
+    points: Vec<ReducedPoint>,
+    cutoff: f64,
+    algorithm: ClusterAlgorithm,
+) -> Vec<ClusterAssignment> {
+    let clusters = complete_linkage_clusters_with_algorithm(&points, cutoff, algorithm);
     build_assignments(points, clusters)
 }
 
@@ -399,10 +729,32 @@ pub fn cluster_structure_files(
     parallel: bool,
     aligned_output_dir: Option<&str>,
 ) -> ClusterResult<Vec<ClusterAssignment>> {
+    cluster_structure_files_with_algorithm(
+        reference_path,
+        input_dir,
+        anchor_chains,
+        reduction_chains,
+        cutoff,
+        parallel,
+        aligned_output_dir,
+        ClusterAlgorithm::Auto,
+    )
+}
+
+pub fn cluster_structure_files_with_algorithm(
+    reference_path: &str,
+    input_dir: &str,
+    anchor_chains: &str,
+    reduction_chains: &str,
+    cutoff: f64,
+    parallel: bool,
+    aligned_output_dir: Option<&str>,
+    cluster_algorithm: ClusterAlgorithm,
+) -> ClusterResult<Vec<ClusterAssignment>> {
     validate_cutoff(cutoff)?;
 
     let file_names = structure_files_from_directory(input_dir)?;
-    cluster_structures(
+    cluster_structures_with_algorithm(
         reference_path,
         input_dir,
         &file_names,
@@ -411,6 +763,7 @@ pub fn cluster_structure_files(
         cutoff,
         parallel,
         aligned_output_dir,
+        cluster_algorithm,
     )
 }
 
@@ -423,6 +776,30 @@ pub fn cluster_structures(
     cutoff: f64,
     parallel: bool,
     aligned_output_dir: Option<&str>,
+) -> ClusterResult<Vec<ClusterAssignment>> {
+    cluster_structures_with_algorithm(
+        reference_path,
+        input_dir,
+        file_names,
+        anchor_chains,
+        reduction_chains,
+        cutoff,
+        parallel,
+        aligned_output_dir,
+        ClusterAlgorithm::Auto,
+    )
+}
+
+pub fn cluster_structures_with_algorithm(
+    reference_path: &str,
+    input_dir: &str,
+    file_names: &[String],
+    anchor_chains: &str,
+    reduction_chains: &str,
+    cutoff: f64,
+    parallel: bool,
+    aligned_output_dir: Option<&str>,
+    cluster_algorithm: ClusterAlgorithm,
 ) -> ClusterResult<Vec<ClusterAssignment>> {
     validate_cutoff(cutoff)?;
 
@@ -444,9 +821,18 @@ pub fn cluster_structures(
     println!("Reduced points computed in {:?}", reduction_start.elapsed());
 
     let clustering_start = Instant::now();
-    let assignments = assign_clusters(reduced_points, cutoff);
+    let resolved_algorithm = cluster_algorithm.resolve(reduced_points.len());
+    println!(
+        "Using {} clustering algorithm on {} reduced points",
+        resolved_algorithm.as_str(),
+        reduced_points.len()
+    );
+    let assignments = assign_clusters_with_algorithm(reduced_points, cutoff, resolved_algorithm);
     println!("Clustering completed in {:?}", clustering_start.elapsed());
-    println!("Total clustering workflow took {:?}\n", total_start.elapsed());
+    println!(
+        "Total clustering workflow took {:?}\n",
+        total_start.elapsed()
+    );
     Ok(assignments)
 }
 
@@ -458,6 +844,7 @@ pub(crate) fn run_cluster_workflow(
     cutoff: f64,
     do_in_parallel: bool,
     aligned_output_dir: Option<&str>,
+    cluster_algorithm: ClusterAlgorithm,
     output_csv: &str,
 ) -> Result<(), Box<dyn Error>> {
     let file_names = structure_files_from_directory(structure_dir)?;
@@ -487,11 +874,7 @@ pub(crate) fn run_cluster_workflow(
 
                 let mut point_headers = Vec::new();
                 let mut point_table = Vec::new();
-                push_reduced_point_report_columns(
-                    &points,
-                    &mut point_headers,
-                    &mut point_table,
-                );
+                push_reduced_point_report_columns(&points, &mut point_headers, &mut point_table);
                 overwrite_structured_csv(output_csv, point_table, point_headers)?;
                 println!("Reduced points computed in {:?}", reduction_start.elapsed());
                 points
@@ -519,16 +902,156 @@ pub(crate) fn run_cluster_workflow(
     };
 
     let clustering_start = Instant::now();
-    let assignments = assign_clusters(reduced_points, cutoff);
+    let resolved_algorithm = cluster_algorithm.resolve(reduced_points.len());
+    println!(
+        "Using {} clustering algorithm on {} reduced points",
+        resolved_algorithm.as_str(),
+        reduced_points.len()
+    );
+    let assignments = assign_clusters_with_algorithm(reduced_points, cutoff, resolved_algorithm);
     let mut assignment_headers = Vec::new();
     let mut assignment_table = Vec::new();
-    push_cluster_report_columns(
-        &assignments,
-        &mut assignment_headers,
-        &mut assignment_table,
-    );
+    push_cluster_report_columns(&assignments, &mut assignment_headers, &mut assignment_table);
     overwrite_structured_csv(output_csv, assignment_table, assignment_headers)?;
     println!("Clustering completed in {:?}", clustering_start.elapsed());
-    println!("Total clustering workflow took {:?}\n", total_start.elapsed());
+    println!(
+        "Total clustering workflow took {:?}\n",
+        total_start.elapsed()
+    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        assign_clusters_with_algorithm, ClusterAlgorithm, ReducedPoint, HIGH_VOLUME_AUTO_THRESHOLD,
+    };
+    use nalgebra::Vector3;
+    use std::time::Instant;
+
+    #[derive(Clone, Copy)]
+    struct DeterministicRng {
+        state: u64,
+    }
+
+    impl DeterministicRng {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.state = self
+                .state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.state
+        }
+
+        fn next_f64(&mut self, max: f64) -> f64 {
+            (self.next_u64() % 10_000) as f64 * max / 10_000.0
+        }
+    }
+
+    fn reduced_points(coords: &[(f64, f64, f64)]) -> Vec<ReducedPoint> {
+        coords
+            .iter()
+            .enumerate()
+            .map(|(index, (x, y, z))| ReducedPoint {
+                model: format!("model_{index}"),
+                point: Vector3::new(*x, *y, *z),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn high_volume_matches_primitive_on_tie_heavy_example() {
+        let points = reduced_points(&[
+            (2.0, 5.0, 3.0),
+            (5.0, 1.0, 3.0),
+            (4.0, 5.0, 0.0),
+            (2.0, 2.0, 1.0),
+            (1.0, 2.0, 4.0),
+        ]);
+        let cutoff = 4.00435051305741_f64;
+
+        let primitive =
+            assign_clusters_with_algorithm(points.clone(), cutoff, ClusterAlgorithm::Primitive);
+        let high_volume =
+            assign_clusters_with_algorithm(points, cutoff, ClusterAlgorithm::HighVolume);
+
+        assert_eq!(primitive, high_volume);
+    }
+
+    #[test]
+    fn high_volume_matches_primitive_on_randomized_inputs() {
+        let mut rng = DeterministicRng::new(42);
+
+        for n_points in 2..40 {
+            for _ in 0..250 {
+                let coords: Vec<(f64, f64, f64)> = (0..n_points)
+                    .map(|_| {
+                        (
+                            rng.next_f64(6.0).round(),
+                            rng.next_f64(6.0).round(),
+                            rng.next_f64(6.0).round(),
+                        )
+                    })
+                    .collect();
+                let cutoff = 0.5 + rng.next_f64(4.5);
+                let points = reduced_points(&coords);
+                let primitive = assign_clusters_with_algorithm(
+                    points.clone(),
+                    cutoff,
+                    ClusterAlgorithm::Primitive,
+                );
+                let high_volume =
+                    assign_clusters_with_algorithm(points, cutoff, ClusterAlgorithm::HighVolume);
+                assert_eq!(primitive, high_volume, "failed for cutoff {cutoff}");
+            }
+        }
+    }
+
+    #[test]
+    fn auto_switches_to_high_volume_for_large_inputs() {
+        assert_eq!(
+            ClusterAlgorithm::Auto.resolve(HIGH_VOLUME_AUTO_THRESHOLD - 1),
+            ClusterAlgorithm::Primitive
+        );
+        assert_eq!(
+            ClusterAlgorithm::Auto.resolve(HIGH_VOLUME_AUTO_THRESHOLD),
+            ClusterAlgorithm::HighVolume
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn benchmark_high_volume_against_primitive() {
+        let mut points = Vec::new();
+        for cluster_idx in 0..700 {
+            let base = cluster_idx as f64 * 25.0;
+            for offset in 0..4 {
+                points.push(ReducedPoint {
+                    model: format!("model_{}_{}", cluster_idx, offset),
+                    point: Vector3::new(base + offset as f64 * 0.2, offset as f64 * 0.15, 0.0),
+                });
+            }
+        }
+        let cutoff = 0.75;
+
+        let primitive_start = Instant::now();
+        let primitive =
+            assign_clusters_with_algorithm(points.clone(), cutoff, ClusterAlgorithm::Primitive);
+        let primitive_elapsed = primitive_start.elapsed();
+
+        let high_volume_start = Instant::now();
+        let high_volume =
+            assign_clusters_with_algorithm(points, cutoff, ClusterAlgorithm::HighVolume);
+        let high_volume_elapsed = high_volume_start.elapsed();
+
+        assert_eq!(primitive, high_volume);
+        println!(
+            "primitive={:?}, high_volume={:?}",
+            primitive_elapsed, high_volume_elapsed
+        );
+    }
 }

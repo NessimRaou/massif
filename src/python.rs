@@ -1,17 +1,17 @@
+use pdbtbx::Element;
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pdbtbx::Element;
 
-use crate::cli;
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
+use crate::cli;
 use crate::contacts::{all_contacts, count_clashes};
 use crate::interface::all_iplddt;
 use crate::metrics::all_distances;
 use crate::scoring::score_interface;
-use crate::structure_clustering::{cluster_structures, compute_reduced_points};
+use crate::structure_clustering::{cluster_structures_with_algorithm, compute_reduced_points};
 use crate::structure_files_from_directory;
-use crate::{assign_clusters, ClusterAssignment, ReducedPoint};
+use crate::{assign_clusters_with_algorithm, ClusterAlgorithm, ClusterAssignment, ReducedPoint};
 
 fn resolve_filenames(
     structure_dir: &str,
@@ -20,8 +20,7 @@ fn resolve_filenames(
     if let Some(names) = file_names {
         return Ok(names);
     }
-    structure_files_from_directory(structure_dir)
-        .map_err(|err| PyIOError::new_err(err.to_string()))
+    structure_files_from_directory(structure_dir).map_err(|err| PyIOError::new_err(err.to_string()))
 }
 
 fn validate_distance_mode(distance_mode: &str) -> PyResult<()> {
@@ -72,6 +71,17 @@ fn validate_cutoff(cutoff: f64) -> PyResult<()> {
         ));
     }
     Ok(())
+}
+
+fn parse_cluster_algorithm(value: &str) -> PyResult<ClusterAlgorithm> {
+    match value {
+        "auto" => Ok(ClusterAlgorithm::Auto),
+        "primitive" => Ok(ClusterAlgorithm::Primitive),
+        "high-volume" => Ok(ClusterAlgorithm::HighVolume),
+        _ => Err(PyValueError::new_err(
+            "algorithm must be 'auto', 'primitive', or 'high-volume'",
+        )),
+    }
 }
 
 fn reduced_points_from_lists(
@@ -324,17 +334,21 @@ fn reduce_to_point(
 /// This function expects the four lists previously returned by `reduce_to_point`.
 /// The `models`, `x`, `y`, and `z` arrays must have the same length and matching
 /// order. The returned cluster ids follow that exact same order.
-#[pyfunction(signature = (models, x, y, z, cutoff))]
+#[pyfunction(signature = (models, x, y, z, cutoff, *, algorithm="auto"))]
 fn cluster_coordinates(
     models: Vec<String>,
     x: Vec<f64>,
     y: Vec<f64>,
     z: Vec<f64>,
     cutoff: f64,
+    algorithm: &str,
 ) -> PyResult<Vec<usize>> {
     validate_cutoff(cutoff)?;
+    let algorithm = parse_cluster_algorithm(algorithm)?;
     let points = reduced_points_from_lists(models, x, y, z)?;
-    Ok(assignments_to_cluster_ids(assign_clusters(points, cutoff)))
+    Ok(assignments_to_cluster_ids(assign_clusters_with_algorithm(
+        points, cutoff, algorithm,
+    )))
 }
 
 /// Run the full clustering workflow and return cluster ids in model order.
@@ -351,7 +365,8 @@ fn cluster_coordinates(
     *,
     file_names=None,
     parallel=true,
-    aligned_output_dir=None
+    aligned_output_dir=None,
+    algorithm="auto"
 ))]
 fn cluster_models(
     structure_dir: &str,
@@ -362,10 +377,12 @@ fn cluster_models(
     file_names: Option<Vec<String>>,
     parallel: bool,
     aligned_output_dir: Option<String>,
+    algorithm: &str,
 ) -> PyResult<Vec<usize>> {
     validate_cutoff(cutoff)?;
+    let algorithm = parse_cluster_algorithm(algorithm)?;
     let filenames = resolve_filenames(structure_dir, file_names)?;
-    let assignments = cluster_structures(
+    let assignments = cluster_structures_with_algorithm(
         reference_structure,
         structure_dir,
         &filenames,
@@ -374,6 +391,7 @@ fn cluster_models(
         cutoff,
         parallel,
         aligned_output_dir.as_deref(),
+        algorithm,
     )
     .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
     Ok(assignments_to_cluster_ids(assignments))
@@ -383,9 +401,7 @@ fn cluster_models(
 #[pyfunction]
 #[pyo3(text_signature = "(pdb_file, /)")]
 fn chain_distances(pdb_file: &str) -> PyResult<Vec<(String, String, f64)>> {
-    Ok(chain_distances_to_tuples(minimal_chain_distances(
-        pdb_file,
-    )))
+    Ok(chain_distances_to_tuples(minimal_chain_distances(pdb_file)))
 }
 
 /// Compute minimal chain-to-chain distances for all structures in a directory.
