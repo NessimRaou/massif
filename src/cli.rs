@@ -1,15 +1,8 @@
 use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
-use pdbtbx::{open, Element, save};
+use pdbtbx::{open, save, Element};
 use polars::prelude::{
-    CsvReader,
-    CsvWriter,
-    DataFrame,
-    DataType,
-    NamedFrom,
-    SerReader,
-    SerWriter,
-    Series,
+    CsvReader, CsvWriter, DataFrame, DataType, NamedFrom, SerReader, SerWriter, Series,
 };
 use std::{
     error::Error,
@@ -18,25 +11,26 @@ use std::{
     path::Path,
 };
 
-use crate::{
-    all_alignment,
-    all_contacts,
-    all_distances,
-    all_iplddt,
-    all_min_distances,
-    all_scores_computation,
-    count_clashes,
-    filter_chain_pairs,
-    parallel_all_alignment,
-    sanitize_data,
-    score_interface,
-    structure_files_from_directory,
-    ChainDistance,
-    Contact,
-};
 use crate::structure_clustering::run_cluster_workflow;
+use crate::{
+    all_alignment, all_contacts, all_distances, all_iplddt, all_min_distances,
+    all_scores_computation, count_clashes, filter_chain_pairs, parallel_all_alignment,
+    sanitize_data, score_interface, structure_files_from_directory, ChainDistance,
+    ClusterAlgorithm, Contact,
+};
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
+
+fn parse_cluster_algorithm(value: &str) -> Result<ClusterAlgorithm, String> {
+    match value {
+        "auto" => Ok(ClusterAlgorithm::Auto),
+        "primitive" => Ok(ClusterAlgorithm::Primitive),
+        "high-volume" => Ok(ClusterAlgorithm::HighVolume),
+        _ => Err(String::from(
+            "cluster algorithm must be one of: auto, primitive, high-volume",
+        )),
+    }
+}
 
 pub(crate) fn structured_csv_path(csv_filename: &str) -> String {
     csv_filename.to_string()
@@ -296,6 +290,9 @@ enum Commands {
         /// Optional directory where aligned reference and models will be written
         #[arg(long)]
         aligned_output_dir: Option<String>,
+        /// Clustering engine to use after point reduction
+        #[arg(long, default_value = "auto", value_parser = parse_cluster_algorithm)]
+        cluster_algorithm: ClusterAlgorithm,
         #[command(flatten)]
         common: CommonArgs,
     },
@@ -354,8 +351,10 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
             let reference_chain = chain_ids;
-            let (pdb1, _errors) = open(&reference_structure)
-                .expect(&format!("Failed to open first PDB {}", &reference_structure));
+            let (pdb1, _errors) = open(&reference_structure).expect(&format!(
+                "Failed to open first PDB {}",
+                &reference_structure
+            ));
             let mut pdb1 = pdb1;
             pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
             pdb1.full_sort();
@@ -363,8 +362,10 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
 
             // save the modified reference pdb in output_dir
             let ref_filename = Path::new(&reference_structure)
-                .file_name().unwrap()
-                .to_str().unwrap()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
                 .to_string();
             let output_ref = format!("{output_dir}/{ref_filename}");
             save(&pdb1, &output_ref, pdbtbx::StrictnessLevel::Loose)
@@ -425,7 +426,10 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
             }
         }
-        Commands::Contacts { output_dir: _, common, } => {
+        Commands::Contacts {
+            output_dir: _,
+            common,
+        } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
@@ -486,6 +490,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             reduction_chains,
             cutoff,
             aligned_output_dir,
+            cluster_algorithm,
             common,
         } => {
             run_cluster_workflow(
@@ -496,6 +501,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 cutoff,
                 do_in_parallel,
                 aligned_output_dir.as_deref(),
+                cluster_algorithm,
                 &common.output_csv,
             )?;
         }
@@ -529,7 +535,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
             }
         }
-        Commands::Scoring { common, } => {
+        Commands::Scoring { common } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
             let _output_csv = common.output_csv;
