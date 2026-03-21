@@ -61,17 +61,26 @@ pub fn compute_centroid(atoms: &[Vector3<f64>]) -> Vector3<f64> {
 fn kabsch(p: &[Vector3<f64>], q: &[Vector3<f64>]) -> Matrix3<f64> {
     let mut covariance = Matrix3::zeros();
     for (p_vec, q_vec) in p.iter().zip(q.iter()) {
-        covariance += p_vec * q_vec.transpose();
+        covariance += q_vec * p_vec.transpose();
     }
     let svd = covariance.svd(true, true);
     let u = svd.u.unwrap();
     let v_t = svd.v_t.unwrap();
     let d = if (u * v_t).determinant() < 0.0 {
-        Matrix3::from_diagonal(&Vector3::new(1.0, 1.0, -1.0))
+        let mut correction = Matrix3::identity();
+        let smallest_sigma_index = svd
+            .singular_values
+            .iter()
+            .enumerate()
+            .min_by(|left, right| left.1.total_cmp(right.1))
+            .map(|(index, _)| index)
+            .unwrap_or(2);
+        correction[(smallest_sigma_index, smallest_sigma_index)] = -1.0;
+        correction
     } else {
         Matrix3::identity()
     };
-    u * d * v_t
+    v_t.transpose() * d * u.transpose()
 }
 
 pub fn parse_chain_group(chain_group: &str) -> Vec<String> {
