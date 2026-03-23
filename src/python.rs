@@ -1,17 +1,19 @@
+use pdbtbx::Element;
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pdbtbx::Element;
+use pyo3::types::PyDict;
 
-use crate::cli;
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
-use crate::contacts::{all_contacts, clashes_threshold};
+use crate::cli;
+use crate::contacts::{all_contacts, all_contacts_with_clashes, clashes_threshold};
 use crate::interface::all_iplddt;
 use crate::metrics::all_distances;
 use crate::scoring::score_interface;
 use crate::structure_clustering::{cluster_structures, compute_reduced_points};
 use crate::structure_files_from_directory;
 use crate::{assign_clusters, ClusterAssignment, ReducedPoint};
+use dockq_rs::ResidueKey;
 
 fn resolve_filenames(
     structure_dir: &str,
@@ -20,8 +22,7 @@ fn resolve_filenames(
     if let Some(names) = file_names {
         return Ok(names);
     }
-    structure_files_from_directory(structure_dir)
-        .map_err(|err| PyIOError::new_err(err.to_string()))
+    structure_files_from_directory(structure_dir).map_err(|err| PyIOError::new_err(err.to_string()))
 }
 
 fn validate_distance_mode(distance_mode: &str) -> PyResult<()> {
@@ -38,6 +39,14 @@ fn chain_distances_to_tuples(distances: Vec<ChainDistance>) -> Vec<(String, Stri
         .into_iter()
         .map(|entry| (entry.chain1, entry.chain2, entry.min_distance))
         .collect()
+}
+
+fn residue_key_to_string(key: &ResidueKey) -> String {
+    let ins = key.insertion_code.as_deref().unwrap_or("");
+    format!(
+        "{}:{}:{}{}",
+        key.chain_id, key.residue_name, key.residue_number, ins
+    )
 }
 
 fn reduced_points_to_lists(
@@ -255,21 +264,54 @@ fn iplddt(
     ))
 }
 
+/// Extract residue-residue contacts as flat Python dict records.
+///
+/// Each returned dict contains:
+/// - `model`
+/// - `receptor`
+/// - `ligand`
+/// - `rec_contact`
+/// - `lig_contact`
+#[pyfunction(signature = (structure_dir, *, file_names=None))]
+fn contacts(
+    py: Python<'_>,
+    structure_dir: &str,
+    file_names: Option<Vec<String>>,
+) -> PyResult<Vec<PyObject>> {
+    let filenames = resolve_filenames(structure_dir, file_names)?;
+    let per_model = all_contacts(&filenames, structure_dir);
+    let mut rows = Vec::new();
+
+    for (model, interfaces) in filenames.iter().zip(per_model.iter()) {
+        for interface in interfaces {
+            let contacts = interface.result.as_ref().map_err(|err| {
+                PyRuntimeError::new_err(format!(
+                    "failed to extract contacts for model '{}' interface '{}:{}': {}",
+                    model, interface.partners.receptor, interface.partners.ligand, err
+                ))
+            })?;
+
+            for contact in contacts {
+                let row = PyDict::new_bound(py);
+                row.set_item("model", model)?;
+                row.set_item("receptor", &interface.partners.receptor)?;
+                row.set_item("ligand", &interface.partners.ligand)?;
+                row.set_item("rec_contact", residue_key_to_string(&contact.receptor))?;
+                row.set_item("lig_contact", residue_key_to_string(&contact.ligand))?;
+                rows.push(row.into_py(py));
+            }
+        }
+    }
+
+    Ok(rows)
+}
+
 /// Count atomic clashes per structure; returns (threshold, counts).
 #[pyfunction(signature = (structure_dir, *, file_names=None))]
 fn clash_counts(structure_dir: &str, file_names: Option<Vec<String>>) -> PyResult<(f64, Vec<f64>)> {
     let filenames = resolve_filenames(structure_dir, file_names)?;
-    let per_model = all_contacts(&filenames, structure_dir);
-    let counts: Vec<f64> = per_model
-        .iter()
-        .map(|interfaces| {
-            interfaces
-                .iter()
-                .filter_map(|interfaces| interfaces.result.as_ref().ok())
-                .map(|contacts| contacts.clashes.len() as f64)
-                .sum()
-        })
-        .collect();
+    let per_model = all_contacts_with_clashes(&filenames, structure_dir);
+    let counts: Vec<f64> = per_model.iter().map(|summary| summary.clashes).collect();
     let threshold = if counts.len() > 1 {
         clashes_threshold(&counts)
     } else {
@@ -398,9 +440,7 @@ fn cluster_models(
 #[pyfunction]
 #[pyo3(text_signature = "(pdb_file, /)")]
 fn chain_distances(pdb_file: &str) -> PyResult<Vec<(String, String, f64)>> {
-    Ok(chain_distances_to_tuples(minimal_chain_distances(
-        pdb_file,
-    )))
+    Ok(chain_distances_to_tuples(minimal_chain_distances(pdb_file)))
 }
 
 /// Compute minimal chain-to-chain distances for all structures in a directory.
@@ -436,7 +476,7 @@ fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
         argv
     } else {
         Python::with_gil(|py| -> PyResult<Vec<String>> {
-            let sys = py.import("sys")?;
+            let sys = py.import_bound("sys")?;
             let argv: Vec<String> = sys.getattr("argv")?.extract()?;
             Ok(argv)
         })?
@@ -445,13 +485,14 @@ fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
 }
 
 #[pymodule]
-fn massif(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn massif(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(structure_files, m)?)?;
     m.add_function(wrap_pyfunction!(align, m)?)?;
     m.add_function(wrap_pyfunction!(fit, m)?)?;
     m.add_function(wrap_pyfunction!(distances, m)?)?;
     m.add_function(wrap_pyfunction!(iplddt, m)?)?;
+    m.add_function(wrap_pyfunction!(contacts, m)?)?;
     m.add_function(wrap_pyfunction!(clash_counts, m)?)?;
     m.add_function(wrap_pyfunction!(reduce_to_point, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_coordinates, m)?)?;

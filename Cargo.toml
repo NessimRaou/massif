@@ -1,8 +1,8 @@
 [package]
 name = "massif"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
-licence = "CECILL-2.1"
+license = "CECILL-2.1"
 
 [lib]
 crate-type = ["rlib", "cdylib"]
@@ -24,7 +24,7 @@ rstar = {version = "*"}
 indexmap = "2"
 polars = { version = "0.39", features = ["csv"] }
 pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
-dockq-rs = { git = "https://github.com/NessimRaou/dockq-rs"}
+dockq-rs = { git = "https://github.com/NessimRaou/dockq-rs", tag = "v0.4.0" }
 
 [dev-dependencies]
 criterion = "0.3"

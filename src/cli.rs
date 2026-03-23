@@ -1,15 +1,8 @@
 use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
-use pdbtbx::{open, Element, save};
+use pdbtbx::{open, save, Element};
 use polars::prelude::{
-    CsvReader,
-    CsvWriter,
-    DataFrame,
-    DataType,
-    NamedFrom,
-    SerReader,
-    SerWriter,
-    Series,
+    CsvReader, CsvWriter, DataFrame, DataType, NamedFrom, SerReader, SerWriter, Series,
 };
 use std::{
     error::Error,
@@ -18,23 +11,13 @@ use std::{
     path::Path,
 };
 
-use crate::{
-    all_alignment,
-    all_contacts,
-    all_distances,
-    all_iplddt,
-    all_min_distances,
-    all_scores_computation,
-    clashes_threshold,
-    filter_chain_pairs,
-    parallel_all_alignment,
-    sanitize_data,
-    score_interface,
-    structure_files_from_directory,
-    ChainDistance,
-};
 use crate::contacts::write_interface_contacts_csv;
 use crate::structure_clustering::run_cluster_workflow;
+use crate::{
+    all_alignment, all_contacts_with_clashes, all_distances, all_iplddt, all_min_distances,
+    all_scores_computation, clashes_threshold, filter_chain_pairs, parallel_all_alignment,
+    sanitize_data, score_interface, structure_files_from_directory, ChainDistance,
+};
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
 
@@ -354,8 +337,10 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
             let reference_chain = chain_ids;
-            let (pdb1, _errors) = open(&reference_structure)
-                .expect(&format!("Failed to open first PDB {}", &reference_structure));
+            let (pdb1, _errors) = open(&reference_structure).expect(&format!(
+                "Failed to open first PDB {}",
+                &reference_structure
+            ));
             let mut pdb1 = pdb1;
             pdb1.remove_atoms_by(|atom| atom.element() == Some(&Element::H));
             pdb1.full_sort();
@@ -363,8 +348,10 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
 
             // save the modified reference pdb in output_dir
             let ref_filename = Path::new(&reference_structure)
-                .file_name().unwrap()
-                .to_str().unwrap()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
                 .to_string();
             let output_ref = format!("{output_dir}/{ref_filename}");
             save(&pdb1, &output_ref, pdbtbx::StrictnessLevel::Loose)
@@ -425,29 +412,27 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
             }
         }
-        Commands::Contacts { output_dir: _, common, } => {
+        Commands::Contacts {
+            output_dir: _,
+            common,
+        } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
 
-            let per_model_interfaces = all_contacts(&file_names, &structure_dir);
-
-            let clashes_per_model: Vec<f64> = per_model_interfaces
+            let contact_summaries = all_contacts_with_clashes(&file_names, &structure_dir);
+            let per_model_interfaces: Vec<_> = contact_summaries
                 .iter()
-                .map(|interfaces| {
-                    interfaces
-                        .iter()
-                        .filter_map(|interface| interface.result.as_ref().ok())
-                        .map(|contacts| contacts.clashes.len() as f64)
-                        .sum()
-                })
+                .map(|summary| summary.interfaces.clone())
+                .collect();
+            let clashes_per_model: Vec<f64> = contact_summaries
+                .iter()
+                .map(|summary| summary.clashes)
                 .collect();
 
             if clashes_per_model.len() > 1 {
                 let threshold = clashes_threshold(&clashes_per_model);
-                println!(
-                    "Models with more than {threshold} total clashes won't be investigated"
-                );
+                println!("Models with more than {threshold} total clashes won't be investigated");
             }
 
             let detail_dir = Path::new(&output_csv)
@@ -491,12 +476,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             }
 
             report_colnames.push(String::from("clashes"));
-            final_report.push(
-                clashes_per_model
-                    .iter()
-                    .map(|n| n.to_string())
-                    .collect(),
-            );
+            final_report.push(clashes_per_model.iter().map(|n| n.to_string()).collect());
 
             let scores = score_interface(&file_names, &structure_dir, "pTM");
             let scores_string: Vec<String> = scores.iter().map(|&num| num.to_string()).collect();
@@ -589,7 +569,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
             }
         }
-        Commands::Scoring { common, } => {
+        Commands::Scoring { common } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
             let _output_csv = common.output_csv;

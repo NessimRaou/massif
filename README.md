@@ -99,6 +99,7 @@ Characterise interface contacts and clashes across the ensemble.
 ```bash
 massif contacts <OUTPUT_DIR> <STRUCTURE_DIR> <OUTPUT_CSV>
 ```
+- Extracts direct residue-residue contacts from each model interface and writes one `<model>_contact_details.csv` file per structure
 - Reports the number of atomic clashes per model and prints the automatic exclusion threshold (mean + 2×SD)
 - Adds interface score placeholders (future integration of pTM/ipTM based scoring)
 - Aligned structures are not emitted; `OUTPUT_DIR` is reserved for future extensions
