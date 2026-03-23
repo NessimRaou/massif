@@ -25,15 +25,15 @@ use crate::{
     all_iplddt,
     all_min_distances,
     all_scores_computation,
-    count_clashes,
+    clashes_threshold,
     filter_chain_pairs,
     parallel_all_alignment,
     sanitize_data,
     score_interface,
     structure_files_from_directory,
     ChainDistance,
-    Contact,
 };
+use crate::contacts::write_interface_contacts_csv;
 use crate::structure_clustering::run_cluster_workflow;
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
@@ -430,18 +430,78 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
 
-            let contacts: Vec<Vec<Contact>> = all_contacts(&file_names, &structure_dir);
-            let (clash_threshold, clashes_data) = count_clashes(&contacts);
-            let clashes_string: Vec<String> =
-                clashes_data.iter().map(|&num| num.to_string()).collect();
-            final_report.push(clashes_string);
-            println!("Models with more than {clash_threshold} clashes won't be investigated");
+            let per_model_interfaces = all_contacts(&file_names, &structure_dir);
+
+            let clashes_per_model: Vec<f64> = per_model_interfaces
+                .iter()
+                .map(|interfaces| {
+                    interfaces
+                        .iter()
+                        .filter_map(|interface| interface.result.as_ref().ok())
+                        .map(|contacts| contacts.clashes.len() as f64)
+                        .sum()
+                })
+                .collect();
+
+            if clashes_per_model.len() > 1 {
+                let threshold = clashes_threshold(&clashes_per_model);
+                println!(
+                    "Models with more than {threshold} total clashes won't be investigated"
+                );
+            }
+
+            let detail_dir = Path::new(&output_csv)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            if let Err(err) = std::fs::create_dir_all(detail_dir) {
+                eprintln!(
+                    "Could not create contact-detail output directory {}: {}",
+                    detail_dir.display(),
+                    err
+                );
+            } else {
+                let detail_dir_resolved = std::fs::canonicalize(detail_dir)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| detail_dir.display().to_string());
+                println!(
+                    "Contact detail CSVs ({{stem}}_contact_details.csv) are written under: {}",
+                    detail_dir_resolved
+                );
+                for (model_file, interfaces) in file_names.iter().zip(per_model_interfaces.iter()) {
+                    let stem = Path::new(model_file)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(model_file.as_str());
+                    let detail_path = detail_dir.join(format!("{stem}_contact_details.csv"));
+                    match write_interface_contacts_csv(&detail_path, interfaces) {
+                        Ok(()) => {
+                            let shown = std::fs::canonicalize(&detail_path)
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|_| detail_path.display().to_string());
+                            println!("Wrote contact details: {}", shown);
+                        }
+                        Err(err) => eprintln!(
+                            "Failed to write contact details {}: {}",
+                            detail_path.display(),
+                            err
+                        ),
+                    }
+                }
+            }
+
+            report_colnames.push(String::from("clashes"));
+            final_report.push(
+                clashes_per_model
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect(),
+            );
 
             let scores = score_interface(&file_names, &structure_dir, "pTM");
             let scores_string: Vec<String> = scores.iter().map(|&num| num.to_string()).collect();
+            report_colnames.push(String::from("pTM"));
             final_report.push(scores_string);
-            println!("{:?}", file_names);
-            println!("{:?}", scores);
 
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);

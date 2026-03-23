@@ -5,7 +5,7 @@ use pdbtbx::Element;
 use crate::cli;
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
-use crate::contacts::{all_contacts, count_clashes};
+use crate::contacts::{all_contacts, clashes_threshold};
 use crate::interface::all_iplddt;
 use crate::metrics::all_distances;
 use crate::scoring::score_interface;
@@ -259,8 +259,23 @@ fn iplddt(
 #[pyfunction(signature = (structure_dir, *, file_names=None))]
 fn clash_counts(structure_dir: &str, file_names: Option<Vec<String>>) -> PyResult<(f64, Vec<f64>)> {
     let filenames = resolve_filenames(structure_dir, file_names)?;
-    let contacts = all_contacts(&filenames, structure_dir);
-    Ok(count_clashes(&contacts))
+    let per_model = all_contacts(&filenames, structure_dir);
+    let counts: Vec<f64> = per_model
+        .iter()
+        .map(|interfaces| {
+            interfaces
+                .iter()
+                .filter_map(|interfaces| interfaces.result.as_ref().ok())
+                .map(|contacts| contacts.clashes.len() as f64)
+                .sum()
+        })
+        .collect();
+    let threshold = if counts.len() > 1 {
+        clashes_threshold(&counts)
+    } else {
+        0.0
+    };
+    Ok((threshold, counts))
 }
 
 /// Align submitted models on a reference and reduce each model to one 3D point.
