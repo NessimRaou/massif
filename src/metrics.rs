@@ -1,6 +1,6 @@
 use std::{process, time::Instant};
 
-use indicatif::{ParallelProgressIterator};
+use indicatif::ParallelProgressIterator;
 use nalgebra::Vector3;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::PDB;
@@ -9,7 +9,7 @@ use polars::prelude::{CsvWriter, DataFrame, NamedFrom, SerWriter, Series};
 use rayon::prelude::*;
 use std::fs::File;
 
-use crate::alignment::collect_atom_positions_ref;
+use crate::alignment::{collect_atom_positions_ref, structure_file_path};
 use crate::progress::default_progress_style;
 
 /// Compute TM score between two structure
@@ -42,18 +42,11 @@ fn tm_score(pdb1: &PDB, pdb2: &PDB, distance_chains: &Option<String>) -> f64 {
 /// Compute RMSD between two structure
 fn rmsd(pdb1: &PDB, pdb2: &PDB, distance_chains: &Option<String>) -> f64 {
     let (pdb1_coord, pdb2_coord) = match distance_chains {
-        Some(chain_group) => {
-            (
-                collect_atom_positions_ref(pdb1, chain_group),
-                collect_atom_positions_ref(pdb2, chain_group)
-            )
-        }
-        None => {
-            (
-                get_atom_coordinates(pdb1),
-                get_atom_coordinates(pdb2)
-            )
-        }
+        Some(chain_group) => (
+            collect_atom_positions_ref(pdb1, chain_group),
+            collect_atom_positions_ref(pdb2, chain_group),
+        ),
+        None => (get_atom_coordinates(pdb1), get_atom_coordinates(pdb2)),
     };
     let rmsd_sum: f64 = pdb1_coord
         .par_iter()
@@ -173,7 +166,8 @@ pub fn all_distances(
     pdb_file_names: &[String],
     source_path: &str,
     distance_mode: &str,
-    distance_chains: &Option<String>) -> Vec<f64> {
+    distance_chains: &Option<String>,
+) -> Vec<f64> {
     println!(
         "Computing {distance_mode} between ref & {} structures\nReference: {}",
         pdb_file_names.len(),
@@ -191,7 +185,7 @@ pub fn all_distances(
         .par_iter()
         .progress_with_style(style)
         .map(|pdb_to_compare| {
-            let pdb_file = format!("{source_path}/{pdb_to_compare}");
+            let pdb_file = structure_file_path(source_path, pdb_to_compare);
             //let (pdb2, _errors) = pdbtbx::open(&pdb_file).expect("Failed to open second PDB");
             let (pdb2, _errors) = ReadOptions::default()
                 .set_level(StrictnessLevel::Loose)

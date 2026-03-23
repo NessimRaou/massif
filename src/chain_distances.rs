@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator};
+use indicatif::ParallelProgressIterator;
 use pdbtbx::Atom;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::ContainsAtomConformerResidueChain;
 use rayon::prelude::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
+use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 
 /// Minimal distance between two chains
@@ -126,7 +127,7 @@ pub fn all_min_distances(input_dir: &str, pdb_file_names: &[String]) -> Vec<Vec<
         .par_iter()
         .progress_with_style(style)
         .map(|filename| {
-            let pdb_file = format!("{input_dir}/{filename}");
+            let pdb_file = structure_file_path(input_dir, filename);
             brute_force_minimal_chain_distances(&pdb_file)
         })
         .collect();

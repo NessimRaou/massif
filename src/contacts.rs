@@ -8,6 +8,7 @@ use pdbtbx::PDB;
 use rayon::prelude::*;
 use serde::Serialize;
 
+use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 use dockq_rs::{
     all_interfaces_contacts, compare_contacts, DockQConfig, DockQContact, DockQContacts,
@@ -79,7 +80,10 @@ pub fn all_contacts_with_clashes(
         .par_iter()
         .progress_with_style(style)
         .map(|pdb| {
-            structure_contacts_summary(&format!("{input_dir}/{pdb}"), &DockQConfig::default())
+            structure_contacts_summary(
+                &structure_file_path(input_dir, pdb),
+                &DockQConfig::default(),
+            )
         })
         .collect();
 
@@ -100,7 +104,10 @@ pub fn all_contacts(
         .par_iter()
         .progress_with_style(style)
         .map(|pdb| {
-            structure_interfaces_from_path(&format!("{input_dir}/{pdb}"), &DockQConfig::default())
+            structure_interfaces_from_path(
+                &structure_file_path(input_dir, pdb),
+                &DockQConfig::default(),
+            )
         })
         .collect();
 

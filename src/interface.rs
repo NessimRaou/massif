@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator};
+use indicatif::ParallelProgressIterator;
 use nalgebra::Point3;
+use pdbtbx::AtomConformerResidueChainModel;
 use pdbtbx::ContainsAtomConformer;
 use pdbtbx::ContainsAtomConformerResidue;
 use pdbtbx::ContainsAtomConformerResidueChain;
-use pdbtbx::{AtomConformerResidueChainModel};
 
 use rayon::prelude::*;
 
+use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 
 /// Process inspired from Pierce Lab
@@ -104,7 +105,7 @@ pub fn all_iplddt(
         .par_iter()
         .progress_with_style(style)
         .map(|filename| {
-            let pdb_file = format!("{input_dir}/{filename}");
+            let pdb_file = structure_file_path(input_dir, filename);
             compute_interface_plddt(&pdb_file, aggregate_1, aggregate_2, threshold).unwrap_or(-1.0)
         })
         .collect();

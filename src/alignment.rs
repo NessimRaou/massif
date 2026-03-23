@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{fs, io, process, time::Instant};
 
 use indicatif::{ParallelProgressIterator, ProgressIterator};
@@ -106,10 +107,7 @@ pub fn try_collect_atom_positions_ref(
     let mut missing_chains: Vec<String> = Vec::new();
 
     for chain_id in chain_ids {
-        let Some(chain) = pdb
-            .chains()
-            .find(|chain| chain.id() == chain_id.as_str())
-        else {
+        let Some(chain) = pdb.chains().find(|chain| chain.id() == chain_id.as_str()) else {
             missing_chains.push(chain_id);
             continue;
         };
@@ -191,12 +189,40 @@ pub fn sanitize_structure(pdb: &mut PDB) {
     pdb.full_sort();
 }
 
-/// Store the path of each structure contained inside a directory
+/// Return structure filenames from a directory or a single structure path.
 pub fn structure_files_from_directory(directory: &str) -> io::Result<Vec<String>> {
     let mut all_structure_names = Vec::new();
     let suffixes = [".pdb", ".cif"];
+    let input_path = Path::new(directory);
+    let metadata = fs::metadata(input_path)?;
 
-    for entry in fs::read_dir(directory)? {
+    if metadata.is_file() {
+        let filename = input_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Invalid structure path '{directory}'"),
+                )
+            })?;
+        if suffixes.iter().any(|suffix| filename.ends_with(suffix)) {
+            return Ok(vec![filename.to_string()]);
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Structure path '{directory}' must end in .pdb or .cif"),
+        ));
+    }
+
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Structure input '{directory}' must be a directory or a structure file"),
+        ));
+    }
+
+    for entry in fs::read_dir(input_path)? {
         let entry = entry?;
         if entry.file_type()?.is_file() {
             let filename = entry.file_name();
@@ -226,6 +252,15 @@ pub fn structure_files_from_directory(directory: &str) -> io::Result<Vec<String>
     Ok(all_structure_names)
 }
 
+pub(crate) fn structure_file_path(structures: &str, file_name: &str) -> String {
+    let input_path = Path::new(structures);
+    if input_path.is_file() {
+        structures.to_string()
+    } else {
+        input_path.join(file_name).to_string_lossy().into_owned()
+    }
+}
+
 /// Align all structures to a reference on a reference chain
 pub fn all_alignment(
     filenames: &[String],
@@ -243,7 +278,7 @@ pub fn all_alignment(
         .iter()
         .progress_with_style(style)
         .for_each(|pdb_to_align| {
-            let input_name = format!("{source_path}/{pdb_to_align}");
+            let input_name = structure_file_path(source_path, pdb_to_align);
             let (mut pdb2, _errors) = pdbtbx::open(&input_name).expect("Failed to open second PDB");
             sanitize_structure(&mut pdb2);
             align_structures_ref(
@@ -278,7 +313,7 @@ pub fn parallel_all_alignment(
         .par_iter()
         .progress_with_style(style)
         .for_each(|pdb_to_align| {
-            let input_name = format!("{source_path}/{pdb_to_align}");
+            let input_name = structure_file_path(source_path, pdb_to_align);
             let (mut pdb2, _errors) = pdbtbx::open(&input_name).expect("Failed to open second PDB");
             sanitize_structure(&mut pdb2);
             align_structures_ref(

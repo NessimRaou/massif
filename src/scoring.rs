@@ -1,8 +1,9 @@
 use std::time::Instant;
 
-use indicatif::{ParallelProgressIterator};
+use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 
+use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 
 /// Compute a score for a structure interface likelihood
@@ -42,7 +43,7 @@ pub fn all_scores_computation(input_dir: &str, pdb_file_names: &[String]) -> Vec
         .par_iter()
         .progress_with_style(style)
         .map(|filename| {
-            let pdb_file = format!("{input_dir}/{filename}");
+            let pdb_file = structure_file_path(input_dir, filename);
             score_structure(&pdb_file)
         })
         .collect();

@@ -6,12 +6,13 @@ use std::time::Instant;
 
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressIterator};
 use nalgebra::Vector3;
-use pdbtbx::{save, PDB, ReadOptions, StrictnessLevel};
+use pdbtbx::{save, ReadOptions, StrictnessLevel, PDB};
 use rayon::prelude::*;
 
 use crate::alignment::{
-    apply_transform, compute_centroid, sanitize_structure, structure_files_from_directory,
-    try_collect_atom_positions_ref, try_compute_alignment_transform,
+    apply_transform, compute_centroid, sanitize_structure, structure_file_path,
+    structure_files_from_directory, try_collect_atom_positions_ref,
+    try_compute_alignment_transform,
 };
 use crate::cli::{
     columns_to_structured_rows, load_structured_rows, structured_csv_path, write_structured_csv,
@@ -193,17 +194,16 @@ fn load_structure(path: &str) -> ClusterResult<PDB> {
 }
 
 fn save_structure(pdb: &PDB, output_path: &str) -> ClusterResult<()> {
-    save(pdb, output_path, StrictnessLevel::Loose)
-        .map_err(|errors| {
-            invalid_data(format!(
-                "failed to save structure '{output_path}': {}",
-                errors
-                    .iter()
-                    .map(|error| error.to_string())
-                    .collect::<Vec<String>>()
-                    .join("; ")
-            ))
-        })?;
+    save(pdb, output_path, StrictnessLevel::Loose).map_err(|errors| {
+        invalid_data(format!(
+            "failed to save structure '{output_path}': {}",
+            errors
+                .iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<String>>()
+                .join("; ")
+        ))
+    })?;
     Ok(())
 }
 
@@ -216,7 +216,11 @@ fn ensure_output_dir(output_dir: &str) -> ClusterResult<()> {
     Ok(())
 }
 
-fn write_aligned_reference(reference: &PDB, reference_path: &str, output_dir: &str) -> ClusterResult<()> {
+fn write_aligned_reference(
+    reference: &PDB,
+    reference_path: &str,
+    output_dir: &str,
+) -> ClusterResult<()> {
     let reference_name = Path::new(reference_path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -313,7 +317,10 @@ pub fn complete_linkage_clusters(points: &[ReducedPoint], cutoff: f64) -> Vec<Ve
     final_clusters
 }
 
-fn build_assignments(points: Vec<ReducedPoint>, clusters: ClusterIndices) -> Vec<ClusterAssignment> {
+fn build_assignments(
+    points: Vec<ReducedPoint>,
+    clusters: ClusterIndices,
+) -> Vec<ClusterAssignment> {
     let mut cluster_ids = vec![0; points.len()];
 
     for (cluster_idx, cluster) in clusters.iter().enumerate() {
@@ -362,7 +369,7 @@ pub fn compute_reduced_points(
     }
 
     let compute_point = |model_name: &String| -> ClusterResult<ReducedPoint> {
-        let model_path = format!("{input_dir}/{model_name}");
+        let model_path = structure_file_path(input_dir, model_name);
         let mut model = load_structure(&model_path)?;
         let point = compute_reduced_point(&reference, &mut model, anchor_chains, reduction_chains)?;
         if let Some(output_dir) = aligned_output_dir {
@@ -446,7 +453,10 @@ pub fn cluster_structures(
     let clustering_start = Instant::now();
     let assignments = assign_clusters(reduced_points, cutoff);
     println!("Clustering completed in {:?}", clustering_start.elapsed());
-    println!("Total clustering workflow took {:?}\n", total_start.elapsed());
+    println!(
+        "Total clustering workflow took {:?}\n",
+        total_start.elapsed()
+    );
     Ok(assignments)
 }
 
@@ -487,11 +497,7 @@ pub(crate) fn run_cluster_workflow(
 
                 let mut point_headers = Vec::new();
                 let mut point_table = Vec::new();
-                push_reduced_point_report_columns(
-                    &points,
-                    &mut point_headers,
-                    &mut point_table,
-                );
+                push_reduced_point_report_columns(&points, &mut point_headers, &mut point_table);
                 overwrite_structured_csv(output_csv, point_table, point_headers)?;
                 println!("Reduced points computed in {:?}", reduction_start.elapsed());
                 points
@@ -522,13 +528,12 @@ pub(crate) fn run_cluster_workflow(
     let assignments = assign_clusters(reduced_points, cutoff);
     let mut assignment_headers = Vec::new();
     let mut assignment_table = Vec::new();
-    push_cluster_report_columns(
-        &assignments,
-        &mut assignment_headers,
-        &mut assignment_table,
-    );
+    push_cluster_report_columns(&assignments, &mut assignment_headers, &mut assignment_table);
     overwrite_structured_csv(output_csv, assignment_table, assignment_headers)?;
     println!("Clustering completed in {:?}", clustering_start.elapsed());
-    println!("Total clustering workflow took {:?}\n", total_start.elapsed());
+    println!(
+        "Total clustering workflow took {:?}\n",
+        total_start.elapsed()
+    );
     Ok(())
 }
