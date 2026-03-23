@@ -225,21 +225,24 @@ fn report_to_csv_structured(
 
 #[derive(clap::Args)]
 struct CommonArgs {
-    structure_dir: String,
-    output_csv: String,
+    /// Path to the input structure(s), either a directory filled with structures or a single-structure path.
+    structures: String,
+    /// Path to the command report saved as a CSV file.
+    csv_report: String,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Fit the structures on a given reference and computes their distance to it.
     Fit {
-        /// Path to store the aligned structures
+        /// Path to store the aligned structures.
         output_dir: String,
-        /// Structure to use as a reference for the alignment
+        /// Structure to use as a reference for the alignment.
         reference_structure: String,
-        /// Aggregated identifiers of the chains used for the fitting (e.g. "AB" or "C")
+        /// Aggregated identifiers of the chains used for the fitting (e.g. "AB" or "C").
         chain_ids: String,
         #[arg(short, long, value_parser = ["TM-score", "rmsd-cur"], default_value = "TM-score")]
+        /// Distance metric computed right after the fitting step.
         metric: String,
         /// Optional chain group used when computing the post-fit distance metric
         /// (for example "AB" for either `rmsd-cur` or `TM-score`)
@@ -248,9 +251,9 @@ enum Commands {
         #[command(flatten)]
         common: CommonArgs,
     },
-    /// Complete analysis on contacts.
+    /// Per-model contact analysis. Can run on a single or multiple structures.
     Contacts {
-        /// Path to store inter-chain contacts reports
+        /// Path to store inter-chain contacts per-model reports
         output_dir: String,
         #[command(flatten)]
         common: CommonArgs,
@@ -261,11 +264,12 @@ enum Commands {
         aggregate_1: String,
         /// Aggregated identifiers of the interface's second group of chains (e.g. "AB" or "C")
         aggregate_2: String,
-        /// Distance threshold between two residues to count as interface
+        /// Max distance between two residues to count as interface
         threshold: String,
         #[command(flatten)]
         common: CommonArgs,
     },
+    #[command(hide = true)]
     /// Align structures, reduce a chain group to one point, and cluster those points.
     Cluster {
         /// Structure used as the alignment reference
@@ -282,12 +286,14 @@ enum Commands {
         #[command(flatten)]
         common: CommonArgs,
     },
+    #[command(hide = true)]
     Distances {
         filename: String,
         chain_pairs: String,
         #[command(flatten)]
         common: CommonArgs,
     },
+    #[command(hide = true)]
     Scoring {
         #[command(flatten)]
         common: CommonArgs,
@@ -333,9 +339,9 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             distance_chains,
             common,
         } => {
-            let structure_dir = common.structure_dir;
-            let file_names = structure_files_from_directory(&structure_dir)?;
-            let output_csv = common.output_csv;
+            let structures = common.structures;
+            let file_names = structure_files_from_directory(&structures)?;
+            let csv_report = common.csv_report;
             let reference_chain = chain_ids;
             let (pdb1, _errors) = open(&reference_structure).expect(&format!(
                 "Failed to open first PDB {}",
@@ -363,7 +369,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     &file_names,
                     &pdb1,
                     &reference_chain,
-                    &structure_dir,
+                    &structures,
                     &output_dir,
                     "per_atom",
                 );
@@ -372,7 +378,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     &file_names,
                     &pdb1,
                     &reference_chain,
-                    &structure_dir,
+                    &structures,
                     &output_dir,
                     "per_atom",
                 );
@@ -408,20 +414,20 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
 
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);
-            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
-                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            if let Err(err) = report_to_csv_structured(&csv_report, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", csv_report, err);
             }
         }
         Commands::Contacts {
             output_dir: report_dir,
             common,
         } => {
-            let structure_dir = common.structure_dir;
-            let file_names = structure_files_from_directory(&structure_dir)?;
-            let output_csv = common.output_csv;
+            let structures = common.structures;
+            let file_names = structure_files_from_directory(&structures)?;
+            let csv_report = common.csv_report;
             let report_dir = Path::new(&report_dir);
 
-            let contact_summaries = all_contacts_with_clashes(&file_names, &structure_dir);
+            let contact_summaries = all_contacts_with_clashes(&file_names, &structures);
             let per_model_interfaces: Vec<_> = contact_summaries
                 .iter()
                 .map(|summary| summary.interfaces.clone())
@@ -436,7 +442,7 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 println!("Models with more than {threshold} total clashes won't be investigated");
             }
 
-            let detail_dir = Path::new(&output_csv)
+            let detail_dir = Path::new(&csv_report)
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
@@ -479,15 +485,15 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             report_colnames.push(String::from("clashes"));
             final_report.push(clashes_per_model.iter().map(|n| n.to_string()).collect());
 
-            let scores = score_interface(&file_names, &structure_dir, "pTM");
+            let scores = score_interface(&file_names, &structures, "pTM");
             let scores_string: Vec<String> = scores.iter().map(|&num| num.to_string()).collect();
             report_colnames.push(String::from("pTM"));
             final_report.push(scores_string);
 
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);
-            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
-                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            if let Err(err) = report_to_csv_structured(&csv_report, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", csv_report, err);
             }
         }
         Commands::Iplddt {
@@ -496,15 +502,15 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             threshold,
             common,
         } => {
-            let structure_dir = common.structure_dir;
-            let file_names = structure_files_from_directory(&structure_dir)?;
-            let output_csv = common.output_csv;
+            let structures = common.structures;
+            let file_names = structure_files_from_directory(&structures)?;
+            let csv_report = common.csv_report;
 
             let threshold = threshold
                 .parse::<f64>()
                 .expect("Threshold cannot be cast to f64");
             let all_iplddt = all_iplddt(
-                &structure_dir,
+                &structures,
                 &file_names,
                 &aggregate_1,
                 &aggregate_2,
@@ -517,8 +523,8 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
 
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);
-            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
-                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            if let Err(err) = report_to_csv_structured(&csv_report, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", csv_report, err);
             }
         }
         Commands::Cluster {
@@ -531,13 +537,13 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
         } => {
             run_cluster_workflow(
                 &reference_structure,
-                &common.structure_dir,
+                &common.structures,
                 &anchor_chains,
                 &reduction_chains,
                 cutoff,
                 do_in_parallel,
                 aligned_output_dir.as_deref(),
-                &common.output_csv,
+                &common.csv_report,
             )?;
         }
         Commands::Distances {
@@ -545,11 +551,11 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             chain_pairs,
             common,
         } => {
-            let structure_dir = common.structure_dir;
-            let file_names = structure_files_from_directory(&structure_dir)?;
-            let output_csv = common.output_csv;
+            let structures = common.structures;
+            let file_names = structure_files_from_directory(&structures)?;
+            let csv_report = common.csv_report;
 
-            let distances = all_min_distances(&structure_dir, &file_names);
+            let distances = all_min_distances(&structures, &file_names);
             let distances: Vec<Vec<ChainDistance>> = distances
                 .iter()
                 .map(|num| filter_chain_pairs(&num, &chain_pairs))
@@ -566,16 +572,16 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             }
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);
-            if let Err(err) = report_to_csv_structured(&output_csv, final_report, report_colnames) {
-                eprintln!("Failed to write structured CSV {}: {}", output_csv, err);
+            if let Err(err) = report_to_csv_structured(&csv_report, final_report, report_colnames) {
+                eprintln!("Failed to write structured CSV {}: {}", csv_report, err);
             }
         }
         Commands::Scoring { common } => {
-            let structure_dir = common.structure_dir;
-            let file_names = structure_files_from_directory(&structure_dir)?;
-            let _output_csv = common.output_csv;
+            let structures = common.structures;
+            let file_names = structure_files_from_directory(&structures)?;
+            let _csv_report = common.csv_report;
 
-            let _scores = all_scores_computation(&structure_dir, &file_names);
+            let _scores = all_scores_computation(&structures, &file_names);
         }
     }
     Ok(())
