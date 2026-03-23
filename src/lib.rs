@@ -12,7 +12,10 @@ pub use alignment::{all_alignment, parallel_all_alignment, structure_files_from_
 pub use chain_distances::{
     all_min_distances, filter_chain_pairs, minimal_chain_distances, sanitize_data, ChainDistance,
 };
-pub use contacts::{all_contacts, clashes_threshold, count_clashes};
+pub use contacts::{
+    all_contacts, clashes_threshold, count_clashes, results_to_csv_string,
+    write_interface_contacts_csv, FlatContactRecord,
+};
 pub use dockq_rs::{
   all_dockq,
   compute_dockq,
@@ -22,6 +25,8 @@ pub use dockq_rs::{
   DockQBatchResult,
   DockQConfig,
   DockQContacts,
+  DockQInterfaceContactsResult,
+  DockQPartners,
   DockQResult,
   ResidueKey
 };
