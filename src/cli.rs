@@ -250,7 +250,7 @@ enum Commands {
     },
     /// Complete analysis on contacts.
     Contacts {
-        /// Path to store the aligned structures
+        /// Path to store inter-chain contacts reports
         output_dir: String,
         #[command(flatten)]
         common: CommonArgs,
@@ -413,12 +413,13 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             }
         }
         Commands::Contacts {
-            output_dir: _,
+            output_dir: report_dir,
             common,
         } => {
             let structure_dir = common.structure_dir;
             let file_names = structure_files_from_directory(&structure_dir)?;
             let output_csv = common.output_csv;
+            let report_dir = Path::new(&report_dir);
 
             let contact_summaries = all_contacts_with_clashes(&file_names, &structure_dir);
             let per_model_interfaces: Vec<_> = contact_summaries
@@ -439,26 +440,26 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
-            if let Err(err) = std::fs::create_dir_all(detail_dir) {
+            if let Err(err) = std::fs::create_dir_all(report_dir) {
                 eprintln!(
                     "Could not create contact-detail output directory {}: {}",
                     detail_dir.display(),
                     err
                 );
             } else {
-                let detail_dir_resolved = std::fs::canonicalize(detail_dir)
+                let report_dir_resolving = std::fs::canonicalize(report_dir)
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| detail_dir.display().to_string());
+                    .unwrap_or_else(|_| report_dir.display().to_string());
                 println!(
                     "Contact detail CSVs ({{stem}}_contact_details.csv) are written under: {}",
-                    detail_dir_resolved
+                    report_dir_resolving
                 );
                 for (model_file, interfaces) in file_names.iter().zip(per_model_interfaces.iter()) {
                     let stem = Path::new(model_file)
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or(model_file.as_str());
-                    let detail_path = detail_dir.join(format!("{stem}_contact_details.csv"));
+                    let detail_path = report_dir.join(format!("{stem}_contact_details.csv"));
                     match write_interface_contacts_csv(&detail_path, interfaces) {
                         Ok(()) => {
                             let shown = std::fs::canonicalize(&detail_path)
