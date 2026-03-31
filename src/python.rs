@@ -6,14 +6,16 @@ use pyo3::types::PyDict;
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
 use crate::cli;
-use crate::contacts::{all_contacts, all_contacts_with_clashes, clashes_threshold};
+use crate::contacts::{
+    all_contacts, all_contacts_with_clashes, clashes_threshold, interface_contacts,
+};
 use crate::interface::all_iplddt;
 use crate::metrics::all_distances;
 use crate::scoring::score_interface;
 use crate::structure_clustering::{cluster_structures, compute_reduced_points};
 use crate::structure_files_from_directory;
 use crate::{assign_clusters, ClusterAssignment, ReducedPoint};
-use dockq_rs::ResidueKey;
+use dockq_rs::{DockQContact, DockQInterfaceContactsResult, DockQPartners, ResidueKey};
 
 fn resolve_filenames(
     structure_dir: &str,
@@ -32,6 +34,117 @@ fn validate_distance_mode(distance_mode: &str) -> PyResult<()> {
             "distance_mode must be 'TM-score' or 'rmsd-cur'",
         )),
     }
+}
+
+fn normalize_contacts_aggregate(
+    aggregate: &str,
+    parameter_name: &str,
+) -> PyResult<(String, String)> {
+    let trimmed = aggregate.trim();
+    if trimmed.is_empty() {
+        return Err(PyValueError::new_err(format!(
+            "{parameter_name} must contain at least one chain identifier"
+        )));
+    }
+
+    let tokens: Vec<String> = trimmed
+        .split(',')
+        .map(|token| token.trim())
+        .map(str::to_string)
+        .collect();
+
+    if tokens.iter().any(|token| token.is_empty()) {
+        return Err(PyValueError::new_err(format!(
+            "{parameter_name} must use comma-separated chain identifiers without empty entries"
+        )));
+    }
+
+    if tokens
+        .iter()
+        .any(|token| token.chars().any(char::is_whitespace))
+    {
+        return Err(PyValueError::new_err(format!(
+            "{parameter_name} must use comma-separated chain identifiers; whitespace-only separators are not supported"
+        )));
+    }
+
+    let display = tokens.join(",");
+    // Force DockQ to use separator-based parsing even for single identifiers.
+    let dockq_format = format!("{display},");
+    Ok((display, dockq_format))
+}
+
+fn resolve_contacts_partners(
+    receptor: Option<String>,
+    ligand: Option<String>,
+) -> PyResult<Option<(DockQPartners, DockQPartners)>> {
+    match (receptor, ligand) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(PyValueError::new_err(
+            "receptor and ligand must either both be provided or both be omitted",
+        )),
+        (Some(receptor), Some(ligand)) => {
+            let (display_receptor, dockq_receptor) =
+                normalize_contacts_aggregate(&receptor, "receptor")?;
+            let (display_ligand, dockq_ligand) = normalize_contacts_aggregate(&ligand, "ligand")?;
+
+            Ok(Some((
+                DockQPartners {
+                    receptor: display_receptor,
+                    ligand: display_ligand,
+                },
+                DockQPartners {
+                    receptor: dockq_receptor,
+                    ligand: dockq_ligand,
+                },
+            )))
+        }
+    }
+}
+
+fn interface_result_to_rows(
+    py: Python<'_>,
+    model: &str,
+    receptor: &str,
+    ligand: &str,
+    contacts: &[DockQContact],
+    rows: &mut Vec<PyObject>,
+) -> PyResult<()> {
+    for contact in contacts {
+        let row = PyDict::new_bound(py);
+        row.set_item("model", model)?;
+        row.set_item("receptor", receptor)?;
+        row.set_item("ligand", ligand)?;
+        row.set_item("rec_contact", residue_key_to_string(&contact.receptor))?;
+        row.set_item("lig_contact", residue_key_to_string(&contact.ligand))?;
+        rows.push(row.into_py(py));
+    }
+    Ok(())
+}
+
+fn append_interface_rows(
+    py: Python<'_>,
+    model: &str,
+    interface: &DockQInterfaceContactsResult,
+    display_partners: Option<&DockQPartners>,
+    rows: &mut Vec<PyObject>,
+) -> PyResult<()> {
+    let partners = display_partners.unwrap_or(&interface.partners);
+    let contacts = interface.result.as_ref().map_err(|err| {
+        PyRuntimeError::new_err(format!(
+            "failed to extract contacts for model '{}' interface '{}:{}': {}",
+            model, partners.receptor, partners.ligand, err
+        ))
+    })?;
+
+    interface_result_to_rows(
+        py,
+        model,
+        &partners.receptor,
+        &partners.ligand,
+        contacts,
+        rows,
+    )
 }
 
 fn chain_distances_to_tuples(distances: Vec<ChainDistance>) -> Vec<(String, String, f64)> {
@@ -272,33 +385,38 @@ fn iplddt(
 /// - `ligand`
 /// - `rec_contact`
 /// - `lig_contact`
-#[pyfunction(signature = (structure_dir, *, file_names=None))]
+///
+/// When `receptor` and `ligand` are provided, only that explicit interface is
+/// computed, using comma-separated chain groups such as `A,B`.
+#[pyfunction(signature = (
+    structure_dir,
+    *,
+    receptor=None,
+    ligand=None,
+    file_names=None
+))]
 fn contacts(
     py: Python<'_>,
     structure_dir: &str,
+    receptor: Option<String>,
+    ligand: Option<String>,
     file_names: Option<Vec<String>>,
 ) -> PyResult<Vec<PyObject>> {
     let filenames = resolve_filenames(structure_dir, file_names)?;
-    let per_model = all_contacts(&filenames, structure_dir);
     let mut rows = Vec::new();
 
-    for (model, interfaces) in filenames.iter().zip(per_model.iter()) {
-        for interface in interfaces {
-            let contacts = interface.result.as_ref().map_err(|err| {
-                PyRuntimeError::new_err(format!(
-                    "failed to extract contacts for model '{}' interface '{}:{}': {}",
-                    model, interface.partners.receptor, interface.partners.ligand, err
-                ))
-            })?;
+    if let Some((display_partners, dockq_partners)) = resolve_contacts_partners(receptor, ligand)? {
+        let per_model = interface_contacts(&filenames, structure_dir, &dockq_partners);
 
-            for contact in contacts {
-                let row = PyDict::new_bound(py);
-                row.set_item("model", model)?;
-                row.set_item("receptor", &interface.partners.receptor)?;
-                row.set_item("ligand", &interface.partners.ligand)?;
-                row.set_item("rec_contact", residue_key_to_string(&contact.receptor))?;
-                row.set_item("lig_contact", residue_key_to_string(&contact.ligand))?;
-                rows.push(row.into_py(py));
+        for (model, interface) in filenames.iter().zip(per_model.iter()) {
+            append_interface_rows(py, model, interface, Some(&display_partners), &mut rows)?;
+        }
+    } else {
+        let per_model = all_contacts(&filenames, structure_dir);
+
+        for (model, interfaces) in filenames.iter().zip(per_model.iter()) {
+            for interface in interfaces {
+                append_interface_rows(py, model, interface, None, &mut rows)?;
             }
         }
     }

@@ -11,8 +11,8 @@ use serde::Serialize;
 use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 use dockq_rs::{
-    all_interfaces_contacts, compare_contacts, DockQConfig, DockQContact, DockQContacts,
-    DockQError, DockQInterfaceContactsResult, DockQPartners, ResidueKey,
+    all_interfaces_contacts, compare_contacts, extract_contacts, DockQConfig, DockQContact,
+    DockQContacts, DockQError, DockQInterfaceContactsResult, DockQPartners, ResidueKey,
 };
 
 #[derive(Clone, Debug)]
@@ -49,6 +49,18 @@ fn structure_interfaces_from_path(
 ) -> Vec<DockQInterfaceContactsResult> {
     let structure = read_structure(pdb_path);
     all_interfaces_contacts(&structure, config)
+}
+
+fn structure_interface_from_path(
+    pdb_path: &str,
+    partners: &DockQPartners,
+    config: &DockQConfig,
+) -> DockQInterfaceContactsResult {
+    let structure = read_structure(pdb_path);
+    DockQInterfaceContactsResult {
+        result: extract_contacts(&structure, partners, config),
+        partners: partners.clone(),
+    }
 }
 
 fn structure_contacts_summary(pdb_path: &str, config: &DockQConfig) -> ModelContactsSummary {
@@ -106,6 +118,32 @@ pub fn all_contacts(
         .map(|pdb| {
             structure_interfaces_from_path(
                 &structure_file_path(input_dir, pdb),
+                &DockQConfig::default(),
+            )
+        })
+        .collect();
+
+    println!("Took {:?}\n", start.elapsed());
+    contacts
+}
+
+/// Get residue-residue contacts from one explicit interface in a set of structures.
+pub fn interface_contacts(
+    pdb_file_names: &[String],
+    input_dir: &str,
+    partners: &DockQPartners,
+) -> Vec<DockQInterfaceContactsResult> {
+    println!("Computing contacts in the structures...");
+    let start = Instant::now();
+    let style = default_progress_style();
+
+    let contacts = pdb_file_names
+        .par_iter()
+        .progress_with_style(style)
+        .map(|pdb| {
+            structure_interface_from_path(
+                &structure_file_path(input_dir, pdb),
+                partners,
                 &DockQConfig::default(),
             )
         })
