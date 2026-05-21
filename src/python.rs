@@ -108,16 +108,16 @@ fn interface_result_to_rows(
     receptor: &str,
     ligand: &str,
     contacts: &[DockQContact],
-    rows: &mut Vec<PyObject>,
+    rows: &mut Vec<Py<PyAny>>,
 ) -> PyResult<()> {
     for contact in contacts {
-        let row = PyDict::new_bound(py);
+        let row = PyDict::new(py);
         row.set_item("model", model)?;
         row.set_item("receptor", receptor)?;
         row.set_item("ligand", ligand)?;
         row.set_item("rec_contact", residue_key_to_string(&contact.receptor))?;
         row.set_item("lig_contact", residue_key_to_string(&contact.ligand))?;
-        rows.push(row.into_py(py));
+        rows.push(row.into_any().unbind());
     }
     Ok(())
 }
@@ -127,7 +127,7 @@ fn append_interface_rows(
     model: &str,
     interface: &DockQInterfaceContactsResult,
     display_partners: Option<&DockQPartners>,
-    rows: &mut Vec<PyObject>,
+    rows: &mut Vec<Py<PyAny>>,
 ) -> PyResult<()> {
     let partners = display_partners.unwrap_or(&interface.partners);
     let contacts = interface.result.as_ref().map_err(|err| {
@@ -401,7 +401,7 @@ fn contacts(
     receptor: Option<String>,
     ligand: Option<String>,
     file_names: Option<Vec<String>>,
-) -> PyResult<Vec<PyObject>> {
+) -> PyResult<Vec<Py<PyAny>>> {
     let filenames = resolve_filenames(structure_dir, file_names)?;
     let mut rows = Vec::new();
 
@@ -593,8 +593,8 @@ fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
         argv.insert(0, String::from("massif"));
         argv
     } else {
-        Python::with_gil(|py| -> PyResult<Vec<String>> {
-            let sys = py.import_bound("sys")?;
+        Python::attach(|py| -> PyResult<Vec<String>> {
+            let sys = py.import("sys")?;
             let argv: Vec<String> = sys.getattr("argv")?.extract()?;
             Ok(argv)
         })?

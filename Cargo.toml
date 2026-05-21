@@ -23,7 +23,7 @@ indicatif = {version = "*", features = ["rayon"]}
 rstar = {version = "*"}
 indexmap = "2"
 polars = { version = "0.39", features = ["csv"] }
-pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 dockq-rs = { git = "https://github.com/NessimRaou/dockq-rs", tag = "v0.4.0" }
 
 [dev-dependencies]
