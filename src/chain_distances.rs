@@ -91,7 +91,7 @@ pub fn minimal_chain_distances(pdb_file: &str) -> Vec<ChainDistance> {
             for atom in slow_atoms {
                 let pos = atom.pos();
                 let query_point = [pos.0, pos.1, pos.2];
-                if let Some(nearest) = rtree.nearest_neighbor(query_point) {
+                if let Some(nearest) = rtree.nearest_neighbor(&query_point) {
                     let npos = nearest.atom.pos();
                     let dx = pos.0 - npos.0;
                     let dy = pos.1 - npos.1;
