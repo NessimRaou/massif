@@ -15,7 +15,9 @@ use crate::scoring::score_interface;
 use crate::structure_clustering::{cluster_structures, compute_reduced_points};
 use crate::structure_files_from_directory;
 use crate::{assign_clusters, ClusterAssignment, ReducedPoint};
-use dockq_rs::{DockQContact, DockQInterfaceContactsResult, DockQPartners, ResidueKey};
+use dockq_rs::{
+    DockQConfig, DockQContact, DockQInterfaceContactsResult, DockQPartners, ResidueKey,
+};
 
 fn resolve_filenames(
     structure_dir: &str,
@@ -100,6 +102,22 @@ fn resolve_contacts_partners(
             )))
         }
     }
+}
+
+fn contacts_config(contact_cutoff: Option<f64>) -> PyResult<Option<DockQConfig>> {
+    contact_cutoff
+        .map(|cutoff| {
+            if !cutoff.is_finite() || cutoff <= 0.0 {
+                return Err(PyValueError::new_err(
+                    "contact_cutoff must be a finite positive number",
+                ));
+            }
+
+            let mut config = DockQConfig::default();
+            config.contact_cutoff = cutoff;
+            Ok(config)
+        })
+        .transpose()
 }
 
 fn interface_result_to_rows(
@@ -393,6 +411,7 @@ fn iplddt(
     *,
     receptor=None,
     ligand=None,
+    contact_cutoff=None,
     file_names=None
 ))]
 fn contacts(
@@ -400,19 +419,22 @@ fn contacts(
     structure_dir: &str,
     receptor: Option<String>,
     ligand: Option<String>,
+    contact_cutoff: Option<f64>,
     file_names: Option<Vec<String>>,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let filenames = resolve_filenames(structure_dir, file_names)?;
+    let config = contacts_config(contact_cutoff)?;
     let mut rows = Vec::new();
 
     if let Some((display_partners, dockq_partners)) = resolve_contacts_partners(receptor, ligand)? {
-        let per_model = interface_contacts(&filenames, structure_dir, &dockq_partners);
+        let per_model =
+            interface_contacts(&filenames, structure_dir, &dockq_partners, config.as_ref());
 
         for (model, interface) in filenames.iter().zip(per_model.iter()) {
             append_interface_rows(py, model, interface, Some(&display_partners), &mut rows)?;
         }
     } else {
-        let per_model = all_contacts(&filenames, structure_dir);
+        let per_model = all_contacts(&filenames, structure_dir, config.as_ref());
 
         for (model, interfaces) in filenames.iter().zip(per_model.iter()) {
             for interface in interfaces {

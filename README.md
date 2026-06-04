@@ -47,6 +47,12 @@ distances = massif.distances(
     "path/to/reference.pdb",
     distance_mode="TM-score",
 )
+contacts = massif.contacts(
+    "path/to/structures",
+    receptor="A",
+    ligand="B",
+    contact_cutoff=4.0,
+)
 ```
 
 Notes:

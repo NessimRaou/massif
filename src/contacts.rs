@@ -107,20 +107,18 @@ pub fn all_contacts_with_clashes(
 pub fn all_contacts(
     pdb_file_names: &[String],
     input_dir: &str,
+    config: Option<&DockQConfig>,
 ) -> Vec<Vec<DockQInterfaceContactsResult>> {
     println!("Computing contacts in the structures...");
     let start = Instant::now();
     let style = default_progress_style();
+    let default_config = DockQConfig::default();
+    let config = config.unwrap_or(&default_config);
 
     let contacts = pdb_file_names
         .par_iter()
         .progress_with_style(style)
-        .map(|pdb| {
-            structure_interfaces_from_path(
-                &structure_file_path(input_dir, pdb),
-                &DockQConfig::default(),
-            )
-        })
+        .map(|pdb| structure_interfaces_from_path(&structure_file_path(input_dir, pdb), config))
         .collect();
 
     println!("Took {:?}\n", start.elapsed());
@@ -132,20 +130,19 @@ pub fn interface_contacts(
     pdb_file_names: &[String],
     input_dir: &str,
     partners: &DockQPartners,
+    config: Option<&DockQConfig>,
 ) -> Vec<DockQInterfaceContactsResult> {
     println!("Computing contacts in the structures...");
     let start = Instant::now();
     let style = default_progress_style();
+    let default_config = DockQConfig::default();
+    let config = config.unwrap_or(&default_config);
 
     let contacts = pdb_file_names
         .par_iter()
         .progress_with_style(style)
         .map(|pdb| {
-            structure_interface_from_path(
-                &structure_file_path(input_dir, pdb),
-                partners,
-                &DockQConfig::default(),
-            )
+            structure_interface_from_path(&structure_file_path(input_dir, pdb), partners, config)
         })
         .collect();
 
