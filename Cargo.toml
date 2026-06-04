@@ -20,7 +20,7 @@ nalgebra = "0.29"
 pdbtbx = "0.12.0"
 rayon = "1.10.0"
 indicatif = {version = "*", features = ["rayon"]}
-rstar = {version = "*"}
+rstar = {version = "0.13"}
 indexmap = "2"
 polars = { version = "0.39", features = ["csv"] }
 pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
