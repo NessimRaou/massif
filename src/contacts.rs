@@ -195,6 +195,7 @@ pub struct FlatContactRecord<'a> {
     pub ligand: &'a str,
     pub rec_contact: String,
     pub lig_contact: String,
+    pub distance: f64
 }
 
 fn write_contacts<W: Write>(
@@ -209,6 +210,7 @@ fn write_contacts<W: Write>(
             ligand: lig_chain,
             rec_contact: residue_key_format(&contact.receptor),
             lig_contact: residue_key_format(&contact.ligand),
+            distance: contact.distance
         })?;
     }
     Ok(())

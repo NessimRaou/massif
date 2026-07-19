@@ -135,6 +135,7 @@ fn interface_result_to_rows(
         row.set_item("ligand", ligand)?;
         row.set_item("rec_contact", residue_key_to_string(&contact.receptor))?;
         row.set_item("lig_contact", residue_key_to_string(&contact.ligand))?;
+        row.set_item("distance", contact.distance)?;
         rows.push(row.into_any().unbind());
     }
     Ok(())
