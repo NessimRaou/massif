@@ -18,6 +18,9 @@ use crate::{
     all_scores_computation, clashes_threshold, filter_chain_pairs, parallel_all_alignment,
     sanitize_data, score_interface, structure_files_from_directory, ChainDistance,
 };
+use crate::adjacency::{
+    all_adjacency, parallel_all_adjacency,
+};
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
 
@@ -283,6 +286,14 @@ enum Commands {
         /// Optional directory where aligned reference and models will be written
         #[arg(long)]
         aligned_output_dir: Option<String>,
+        #[command(flatten)]
+        common: CommonArgs,
+    },
+    Adjacency {
+        /// Maximum heavy-atom distance defining a chain contact.
+        #[arg(short, long, default_value_t = 5.0)]
+        cutoff: f64,
+
         #[command(flatten)]
         common: CommonArgs,
     },
@@ -582,6 +593,47 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let _csv_report = common.csv_report;
 
             let _scores = all_scores_computation(&structures, &file_names);
+        }
+        Commands::Adjacency { cutoff, common } => {
+            let structures = common.structures;
+            let csv_report = common.csv_report;
+            let file_names =
+                structure_files_from_directory(&structures)?;
+
+            let adjacency_results = if do_in_parallel {
+                parallel_all_adjacency(
+                    &file_names,
+                    &structures,
+                    cutoff,
+                )?
+            } else {
+                all_adjacency(
+                    &file_names,
+                    &structures,
+                    cutoff,
+                )?
+            };
+
+            let adjacency_strings: Vec<String> =
+                adjacency_results
+                    .iter()
+                    .map(|connected| connected.to_string())
+                    .collect();
+
+            report_colnames.push(format!(
+                "Fully connected (heavy atoms <= {} A)",
+                cutoff
+            ));
+            final_report.push(adjacency_strings);
+
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+
+            report_to_csv_structured(
+                &csv_report,
+                final_report,
+                report_colnames,
+            )?;
         }
     }
     Ok(())

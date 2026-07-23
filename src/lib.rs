@@ -31,5 +31,7 @@ pub use structure_clustering::{
     ClusterAssignment, ReducedPoint,
 };
 
+pub mod adjacency;
+
 #[cfg(feature = "python")]
 mod python;
