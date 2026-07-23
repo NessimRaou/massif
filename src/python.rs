@@ -3,6 +3,7 @@ use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::adjacency::{all_adjacency, parallel_all_adjacency};
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
 use crate::cli;
@@ -609,6 +610,44 @@ fn interface_scores(
     Ok(score_interface(&filenames, structure_dir, ptm_type))
 }
 
+/// Determine whether all chains in each structure form one
+/// contact-connected component.
+///
+/// Two chains are adjacent when at least one pair of non-hydrogen atoms is
+/// separated by no more than `cutoff` angstroms.
+///
+/// Returns one Boolean per input structure, preserving input order.
+#[pyfunction(signature = (
+    structure_dir,
+    *,
+    file_names=None,
+    cutoff=5.0,
+    parallel=true
+))]
+#[pyo3(text_signature = "(structure_dir, *, file_names=None, cutoff=5.0, parallel=True)")]
+fn adjacency(
+    structure_dir: &str,
+    file_names: Option<Vec<String>>,
+    cutoff: f64,
+    parallel: bool,
+) -> PyResult<Vec<bool>> {
+    if !cutoff.is_finite() || cutoff <= 0.0 {
+        return Err(PyValueError::new_err(
+            "cutoff must be a positive finite number",
+        ));
+    }
+
+    let filenames = resolve_filenames(structure_dir, file_names)?;
+
+    let results = if parallel {
+        parallel_all_adjacency(&filenames, structure_dir, cutoff)
+    } else {
+        all_adjacency(&filenames, structure_dir, cutoff)
+    };
+
+    results.map_err(|err: std::io::Error| PyIOError::new_err(err.to_string()))
+}
+
 /// Run the Rust CLI using process arguments or a provided list.
 #[pyfunction(signature = (args=None, /))]
 fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
@@ -641,6 +680,7 @@ fn massif(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chain_distances, m)?)?;
     m.add_function(wrap_pyfunction!(all_chain_distances, m)?)?;
     m.add_function(wrap_pyfunction!(interface_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(adjacency, m)?)?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
     Ok(())
 }

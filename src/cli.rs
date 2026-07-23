@@ -11,15 +11,13 @@ use std::{
     path::Path,
 };
 
+use crate::adjacency::{all_adjacency, parallel_all_adjacency};
 use crate::contacts::write_interface_contacts_csv;
 use crate::structure_clustering::run_cluster_workflow;
 use crate::{
     all_alignment, all_contacts_with_clashes, all_distances, all_iplddt, all_min_distances,
     all_scores_computation, clashes_threshold, filter_chain_pairs, parallel_all_alignment,
     sanitize_data, score_interface, structure_files_from_directory, ChainDistance,
-};
-use crate::adjacency::{
-    all_adjacency, parallel_all_adjacency,
 };
 
 type StructuredRows = IndexMap<String, IndexMap<String, String>>;
@@ -597,43 +595,26 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Adjacency { cutoff, common } => {
             let structures = common.structures;
             let csv_report = common.csv_report;
-            let file_names =
-                structure_files_from_directory(&structures)?;
+            let file_names = structure_files_from_directory(&structures)?;
 
             let adjacency_results = if do_in_parallel {
-                parallel_all_adjacency(
-                    &file_names,
-                    &structures,
-                    cutoff,
-                )?
+                parallel_all_adjacency(&file_names, &structures, cutoff)?
             } else {
-                all_adjacency(
-                    &file_names,
-                    &structures,
-                    cutoff,
-                )?
+                all_adjacency(&file_names, &structures, cutoff)?
             };
 
-            let adjacency_strings: Vec<String> =
-                adjacency_results
-                    .iter()
-                    .map(|connected| connected.to_string())
-                    .collect();
+            let adjacency_strings: Vec<String> = adjacency_results
+                .iter()
+                .map(|connected| connected.to_string())
+                .collect();
 
-            report_colnames.push(format!(
-                "Fully connected (heavy atoms <= {} A)",
-                cutoff
-            ));
+            report_colnames.push("connectivity".to_string());
             final_report.push(adjacency_strings);
 
             report_colnames.push(String::from("Models"));
             final_report.push(file_names);
 
-            report_to_csv_structured(
-                &csv_report,
-                final_report,
-                report_colnames,
-            )?;
+            report_to_csv_structured(&csv_report, final_report, report_colnames)?;
         }
     }
     Ok(())

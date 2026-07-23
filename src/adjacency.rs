@@ -164,10 +164,7 @@ fn collect_chain_bounding_boxes(pdb: &PDB) -> Vec<BoundingBox> {
 ///
 /// A disconnected result is definitive. A connected result only means that an
 /// exact atom-level check is required.
-fn bounding_box_graph_is_connected(
-    bounding_boxes: &[BoundingBox],
-    squared_cutoff: f64,
-) -> bool {
+fn bounding_box_graph_is_connected(bounding_boxes: &[BoundingBox], squared_cutoff: f64) -> bool {
     let chain_count = bounding_boxes.len();
 
     if chain_count <= 1 {
@@ -186,10 +183,7 @@ fn bounding_box_graph_is_connected(
                 continue;
             }
 
-            let squared_distance =
-                bounding_boxes[left].squared_distance_to(
-                    &bounding_boxes[right],
-                );
+            let squared_distance = bounding_boxes[left].squared_distance_to(&bounding_boxes[right]);
 
             if squared_distance <= squared_cutoff {
                 disjoint_set.union(left, right);
@@ -232,10 +226,7 @@ fn atoms_are_in_contact(
 /// atoms is separated by at most `contact_cutoff`.
 ///
 /// This function does not calculate or retain subgroup membership.
-pub fn structure_is_fully_adjacent(
-    pdb: &PDB,
-    contact_cutoff: f64,
-) -> io::Result<bool> {
+pub fn structure_is_fully_adjacent(pdb: &PDB, contact_cutoff: f64) -> io::Result<bool> {
     if !contact_cutoff.is_finite() || contact_cutoff <= 0.0 {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
@@ -261,10 +252,7 @@ pub fn structure_is_fully_adjacent(
 
     // This is a conservative screening step. If the bounding-box graph is
     // disconnected, the real atom-contact graph must also be disconnected.
-    if !bounding_box_graph_is_connected(
-        &bounding_boxes,
-        squared_cutoff,
-    ) {
+    if !bounding_box_graph_is_connected(&bounding_boxes, squared_cutoff) {
         return Ok(false);
     }
 
@@ -285,8 +273,7 @@ pub fn structure_is_fully_adjacent(
                     continue;
                 }
 
-                let current_cell =
-                    grid_cell(x, y, z, inverse_cell_size);
+                let current_cell = grid_cell(x, y, z, inverse_cell_size);
 
                 for offset_x in -1_i64..=1 {
                     for offset_y in -1_i64..=1 {
@@ -297,9 +284,7 @@ pub fn structure_is_fully_adjacent(
                                 z: current_cell.z + offset_z,
                             };
 
-                            let Some(existing_atoms) =
-                                grid.get(&neighboring_cell)
-                            else {
+                            let Some(existing_atoms) = grid.get(&neighboring_cell) else {
                                 continue;
                             };
 
@@ -308,27 +293,17 @@ pub fn structure_is_fully_adjacent(
                                     continue;
                                 }
 
-                                if disjoint_set.find(
-                                    existing_atom.chain_index,
-                                ) == disjoint_set.find(chain_index)
+                                if disjoint_set.find(existing_atom.chain_index)
+                                    == disjoint_set.find(chain_index)
                                 {
                                     continue;
                                 }
 
-                                if !atoms_are_in_contact(
-                                    existing_atom,
-                                    x,
-                                    y,
-                                    z,
-                                    squared_cutoff,
-                                ) {
+                                if !atoms_are_in_contact(existing_atom, x, y, z, squared_cutoff) {
                                     continue;
                                 }
 
-                                disjoint_set.union(
-                                    existing_atom.chain_index,
-                                    chain_index,
-                                );
+                                disjoint_set.union(existing_atom.chain_index, chain_index);
 
                                 // Connectivity can only increase, so this is
                                 // a definitive early exit.
@@ -340,14 +315,12 @@ pub fn structure_is_fully_adjacent(
                     }
                 }
 
-                grid.entry(current_cell)
-                    .or_default()
-                    .push(GridAtom {
-                        chain_index,
-                        x,
-                        y,
-                        z,
-                    });
+                grid.entry(current_cell).or_default().push(GridAtom {
+                    chain_index,
+                    x,
+                    y,
+                    z,
+                });
             }
         }
     }
@@ -355,16 +328,11 @@ pub fn structure_is_fully_adjacent(
     Ok(disjoint_set.is_connected())
 }
 
-fn check_structure_file(
-    structure_path: &str,
-    contact_cutoff: f64,
-) -> io::Result<bool> {
+fn check_structure_file(structure_path: &str, contact_cutoff: f64) -> io::Result<bool> {
     let (pdb, _errors) = pdbtbx::open(structure_path).map_err(|error| {
         io::Error::new(
             ErrorKind::InvalidData,
-            format!(
-                "Failed to open structure '{structure_path}': {error:?}"
-            ),
+            format!("Failed to open structure '{structure_path}': {error:?}"),
         )
     })?;
 
@@ -388,8 +356,7 @@ pub fn all_adjacency(
         .iter()
         .progress_with_style(style)
         .map(|file_name| {
-            let input_path =
-                structure_file_path(source_path, file_name);
+            let input_path = structure_file_path(source_path, file_name);
 
             check_structure_file(&input_path, contact_cutoff)
         })
@@ -416,15 +383,13 @@ pub fn parallel_all_adjacency(
         .par_iter()
         .progress_with_style(style)
         .map(|file_name| {
-            let input_path =
-                structure_file_path(source_path, file_name);
+            let input_path = structure_file_path(source_path, file_name);
 
             check_structure_file(&input_path, contact_cutoff)
         })
         .collect();
 
-    let results: io::Result<Vec<bool>> =
-        results.into_iter().collect();
+    let results: io::Result<Vec<bool>> = results.into_iter().collect();
 
     println!("Took {:?}\n", start.elapsed());
     results
