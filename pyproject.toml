@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "massif"
-version = "0.10.0"
+dynamic = ["version"]
 description = "Fast analysis of massive-scale data produced with MassiveFold"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -15,6 +15,13 @@ classifiers = [
     "Programming Language :: Rust",
     "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
 ]
+
+[project.optional-dependencies]
+docs = ["sphinx>=7", "furo"]
+
+[project.urls]
+Documentation = "https://massif.readthedocs.io"
+Repository = "https://github.com/NessimRaou/Massif"
 
 [project.scripts]
 massif = "massif:run_cli"
