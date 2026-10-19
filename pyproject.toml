@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-docs = ["sphinx>=7", "furo"]
+docs = ["sphinx>=7", "sphinx-book-theme", "myst-parser"]
 
 [project.urls]
 Documentation = "https://massif.readthedocs.io"

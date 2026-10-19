@@ -1,6 +1,18 @@
-API reference
-=============
+Package Methods
+===============
+.. currentmodule:: massif
 
-.. automodule:: massif
-   :members:
-   :undoc-members:
+.. toctree::
+   :maxdepth: 3
+
+   structural
+
+.. toctree::
+   :maxdepth: 3
+
+   metrics
+
+.. toctree::
+   :maxdepth: 3
+
+   transformation

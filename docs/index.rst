@@ -1,18 +1,25 @@
-massif documentation
+Massif Documentation
 ====================
+.. image:: https://raw.githubusercontent.com/NessimRaou/massif/refs/heads/main/imgs/Massif.svg
+   :width: 300
+   :align: center
+   :alt: Massif Logo
 
-Fast analysis of massive-scale data produced with MassiveFold.
+.. include:: ../README.md
+   :parser: myst_parser.sphinx_
+   :start-after: <!-- docs-intro-start -->
+   :end-before: <!-- docs-intro-end -->
 
-Installation
-------------
-
-.. code-block:: bash
-
-   pip install massif
-
-
+Getting started
+===============
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+   :maxdepth: 5
+
+   start
+
+Package methods
+===============
+.. toctree::
+   :maxdepth: 3
 
    api
