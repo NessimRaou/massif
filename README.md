@@ -7,6 +7,7 @@
 </div>
 
 [![PyPI version](https://img.shields.io/pypi/v/massif.svg)](https://pypi.org/project/massif/)
+[![Documentation Status](https://readthedocs.org/projects/massif/badge/?version=latest)](https://readthedocs.org/projects/massif/badge/?version=latest)
 [![Supported Python versions](https://img.shields.io/pypi/pyversions/massif.svg)](https://pypi.org/project/massif/)
 
 ## Introduction
