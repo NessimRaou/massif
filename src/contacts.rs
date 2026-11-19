@@ -102,6 +102,60 @@ pub fn all_contacts_with_clashes(
     summaries
 }
 
+/// The clash counts of a set of structures, each model's contacts written to `{stem}_contact_details.csv` under `report_dir` as soon as they are computed:
+/// only the counts stay in memory (`all_contacts_with_clashes` holds every model's contacts until the end.
+pub fn clashes_writing_contact_details(
+    pdb_file_names: &[String],
+    input_dir: &str,
+    report_dir: &Path,
+) -> Vec<f64> {
+    println!("Computing contacts in the structures...");
+    let start = Instant::now();
+    let style = default_progress_style();
+
+    let clashes = pdb_file_names
+        .par_iter()
+        .progress_with_style(style)
+        .map(|pdb| {
+            let summary = structure_contacts_summary(
+                &structure_file_path(input_dir, pdb),
+                &DockQConfig::default(),
+            );
+            write_model_contact_details(report_dir, pdb, &summary.interfaces);
+            summary.clashes
+        })
+        .collect();
+
+    println!("Took {:?}\n", start.elapsed());
+    clashes
+}
+
+/// `{stem}_contact_details.csv` of one model under `report_dir`, reported on stdout (or stderr on failure).
+pub fn write_model_contact_details(
+    report_dir: &Path,
+    model_file: &str,
+    interfaces: &[DockQInterfaceContactsResult],
+) {
+    let stem = Path::new(model_file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(model_file);
+    let detail_path = report_dir.join(format!("{stem}_contact_details.csv"));
+    match write_interface_contacts_csv(&detail_path, interfaces) {
+        Ok(()) => {
+            let shown = std::fs::canonicalize(&detail_path)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| detail_path.display().to_string());
+            println!("Wrote contact details: {}", shown);
+        }
+        Err(err) => eprintln!(
+            "Failed to write contact details {}: {}",
+            detail_path.display(),
+            err
+        ),
+    }
+}
+
 /// Get all residue-residue contacts from a set of structures.
 pub fn all_contacts(
     pdb_file_names: &[String],

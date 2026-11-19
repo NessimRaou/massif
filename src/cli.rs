@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::adjacency::{all_adjacency, parallel_all_adjacency};
-use crate::contacts::write_interface_contacts_csv;
+use crate::contacts::clashes_writing_contact_details;
 use crate::structure_clustering::run_cluster_workflow;
 use crate::{
     all_alignment, all_contacts_with_clashes, all_distances, all_iplddt, all_min_distances,
@@ -436,59 +436,39 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let csv_report = common.csv_report;
             let report_dir = Path::new(&report_dir);
 
-            let contact_summaries = all_contacts_with_clashes(&file_names, &structures);
-            let per_model_interfaces: Vec<_> = contact_summaries
-                .iter()
-                .map(|summary| summary.interfaces.clone())
-                .collect();
-            let clashes_per_model: Vec<f64> = contact_summaries
-                .iter()
-                .map(|summary| summary.clashes)
-                .collect();
-
-            if clashes_per_model.len() > 1 {
-                let threshold = clashes_threshold(&clashes_per_model);
-                println!("Models with more than {threshold} total clashes won't be investigated");
-            }
-
             let detail_dir = Path::new(&csv_report)
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
-            if let Err(err) = std::fs::create_dir_all(report_dir) {
-                eprintln!(
-                    "Could not create contact-detail output directory {}: {}",
-                    detail_dir.display(),
-                    err
-                );
-            } else {
-                let report_dir_resolving = std::fs::canonicalize(report_dir)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| report_dir.display().to_string());
-                println!(
-                    "Contact detail CSVs ({{stem}}_contact_details.csv) are written under: {}",
-                    report_dir_resolving
-                );
-                for (model_file, interfaces) in file_names.iter().zip(per_model_interfaces.iter()) {
-                    let stem = Path::new(model_file)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or(model_file.as_str());
-                    let detail_path = report_dir.join(format!("{stem}_contact_details.csv"));
-                    match write_interface_contacts_csv(&detail_path, interfaces) {
-                        Ok(()) => {
-                            let shown = std::fs::canonicalize(&detail_path)
-                                .map(|p| p.display().to_string())
-                                .unwrap_or_else(|_| detail_path.display().to_string());
-                            println!("Wrote contact details: {}", shown);
-                        }
-                        Err(err) => eprintln!(
-                            "Failed to write contact details {}: {}",
-                            detail_path.display(),
-                            err
-                        ),
-                    }
+            // Each model's contact details are written as soon as they are computed (only the clash counts stay in memory); if the output directory cannot be
+            // created, the counts are computed without them, as before.
+            let clashes_per_model: Vec<f64> = match std::fs::create_dir_all(report_dir) {
+                Err(err) => {
+                    eprintln!(
+                        "Could not create contact-detail output directory {}: {}",
+                        detail_dir.display(),
+                        err
+                    );
+                    all_contacts_with_clashes(&file_names, &structures)
+                        .iter()
+                        .map(|summary| summary.clashes)
+                        .collect()
                 }
+                Ok(()) => {
+                    let report_dir_resolving = std::fs::canonicalize(report_dir)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| report_dir.display().to_string());
+                    println!(
+                        "Contact detail CSVs ({{stem}}_contact_details.csv) are written under: {}",
+                        report_dir_resolving
+                    );
+                    clashes_writing_contact_details(&file_names, &structures, report_dir)
+                }
+            };
+
+            if clashes_per_model.len() > 1 {
+                let threshold = clashes_threshold(&clashes_per_model);
+                println!("Models with more than {threshold} total clashes won't be investigated");
             }
 
             report_colnames.push(String::from("clashes"));
