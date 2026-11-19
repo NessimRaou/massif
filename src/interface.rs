@@ -54,25 +54,56 @@ pub fn compute_interface_plddt(
         Some(format!("{res_num}\t{chain_id}\t{res_name}"))
     };
 
+    // Positions, residue keys and B-factors computed once per atom (the keys were built for every pair in the inner loop)
+    let position = |atom: &AtomConformerResidueChainModel| Point3::new(atom.atom().x(), atom.atom().y(), atom.atom().z());
+    let positions_1: Vec<Point3<f64>> = aggregate_1_atoms.iter().map(position).collect();
+    let keys_1: Vec<Option<String>> = aggregate_1_atoms.iter().map(get_residue_key).collect();
+
+    // Grid of the first group's atoms, cell edge = threshold: a pair closer than the threshold lies in neighbouring cells
+    let cell = |p: &Point3<f64>| -> (i64, i64, i64) {
+        (
+            (p.x / threshold).floor() as i64,
+            (p.y / threshold).floor() as i64,
+            (p.z / threshold).floor() as i64,
+        )
+    };
+    let mut grid: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    for (index, pos) in positions_1.iter().enumerate() {
+        grid.entry(cell(pos)).or_default().push(index);
+    }
+
     let mut aggregate_1_residues = HashMap::new();
     let mut aggregate_2_residues = HashMap::new();
+    let mut candidates: Vec<usize> = Vec::new();
 
     for atom2 in &aggregate_2_atoms {
         let key2 = match get_residue_key(atom2) {
             Some(key) => key,
             None => continue,
         };
-        let pos2 = Point3::new(atom2.atom().x(), atom2.atom().y(), atom2.atom().z());
-        for atom1 in &aggregate_1_atoms {
-            let pos1 = Point3::new(atom1.atom().x(), atom1.atom().y(), atom1.atom().z());
-            if nalgebra::distance(&pos1, &pos2) >= threshold {
+        let pos2 = position(atom2);
+        let (cx, cy, cz) = cell(&pos2);
+        candidates.clear();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(indices) = grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                        candidates.extend_from_slice(indices);
+                    }
+                }
+            }
+        }
+        // The first group's atoms in their original order: the same insertions in the same order as the full double loop
+        candidates.sort_unstable();
+        for &index in &candidates {
+            if nalgebra::distance(&positions_1[index], &pos2) >= threshold {
                 continue;
             }
-            let key1 = match get_residue_key(atom1) {
-                Some(key) => key,
+            let key1 = match &keys_1[index] {
+                Some(key) => key.clone(),
                 None => continue,
             };
-            aggregate_1_residues.insert(key1, atom1.atom().b_factor());
+            aggregate_1_residues.insert(key1, aggregate_1_atoms[index].atom().b_factor());
             aggregate_2_residues.insert(key2.clone(), atom2.atom().b_factor());
         }
     }
