@@ -1,8 +1,10 @@
 mod alignment;
+mod allocator;
 mod chain_distances;
 mod clashes;
 pub mod cli;
 mod contacts;
+mod dockq;
 mod interface;
 mod metrics;
 mod progress;
@@ -10,6 +12,7 @@ mod scoring;
 mod structure_clustering;
 
 pub use alignment::{all_alignment, parallel_all_alignment, structure_files_from_directory};
+pub use allocator::tune_allocator;
 pub use chain_distances::{
     all_min_distances, filter_chain_pairs, minimal_chain_distances, sanitize_data, ChainDistance,
 };
@@ -18,6 +21,7 @@ pub use contacts::{
     all_clashes, all_contacts, all_contacts_with_clashes, clashes_threshold, count_clashes,
     results_to_csv_string, write_interface_contacts_csv, FlatContactRecord, ModelContactsSummary,
 };
+pub use dockq::{all_dockq_against_native, ModelInterfaceDockQ};
 pub use dockq_rs::{
     all_dockq, all_interfaces_contacts, all_interfaces_contacts_from_files, compare_contacts,
     compare_contacts_from_files, compute_dockq, compute_dockq_from_files, extract_contacts,

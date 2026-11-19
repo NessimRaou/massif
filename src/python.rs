@@ -11,6 +11,7 @@ use crate::cli;
 use crate::contacts::{
     all_contacts, all_contacts_with_clashes, clashes_threshold, interface_contacts,
 };
+use crate::dockq::all_dockq_against_native;
 use crate::interface::all_iplddt;
 use crate::metrics::all_distances;
 use crate::scoring::score_interface;
@@ -120,6 +121,38 @@ fn contacts_config(contact_cutoff: Option<f64>) -> PyResult<Option<DockQConfig>>
             Ok(config)
         })
         .transpose()
+}
+
+fn dockq_config(
+    mode: &str,
+    contact_cutoff: Option<f64>,
+    interface_cutoff: Option<f64>,
+) -> PyResult<DockQConfig> {
+    let mut config = match mode {
+        "standard" => DockQConfig::default(),
+        "capri_peptide" => DockQConfig::capri_peptide(),
+        _ => {
+            return Err(PyValueError::new_err(
+                "mode must be 'standard' or 'capri_peptide'",
+            ))
+        }
+    };
+    if let Some(cutoff) = contact_cutoff {
+        config.contact_cutoff = positive_cutoff(cutoff, "contact_cutoff")?;
+    }
+    if let Some(cutoff) = interface_cutoff {
+        config.interface_cutoff = positive_cutoff(cutoff, "interface_cutoff")?;
+    }
+    Ok(config)
+}
+
+fn positive_cutoff(cutoff: f64, parameter_name: &str) -> PyResult<f64> {
+    if !cutoff.is_finite() || cutoff <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{parameter_name} must be a finite positive number"
+        )));
+    }
+    Ok(cutoff)
 }
 
 fn interface_result_to_rows(
@@ -505,6 +538,84 @@ fn clashes(
             rows.push(row.into_any().unbind());
         }
     }
+
+/// Compute DockQ of every model against a native structure, as flat Python dict records.
+///
+/// Each returned dict contains `model`, `receptor`, `ligand`, `dockq`, `fnat`,
+/// `irmsd`, `lrmsd`, `native_contacts`, `model_contacts`, `shared_contacts`,
+/// `nonnative_contacts` and `clashes`, one record per model and interface.
+///
+/// If `receptor` and `ligand` are provided, only that interface is scored,
+/// using comma-separated chain groups such as `A,B`. Else every chain
+/// is scored.
+///
+/// `mode` values are `"standard"` (5 A contact and 10 A interface cutoffs) or
+/// `"capri_peptide"` (4 A and 8 A). `contact_cutoff` and `interface_cutoff`
+/// override them.
+#[pyfunction(signature = (
+    structure_dir,
+    native_structure,
+    *,
+    receptor=None,
+    ligand=None,
+    mode="standard",
+    contact_cutoff=None,
+    interface_cutoff=None,
+    file_names=None
+))]
+fn dockq(
+    py: Python<'_>,
+    structure_dir: &str,
+    native_structure: &str,
+    receptor: Option<String>,
+    ligand: Option<String>,
+    mode: &str,
+    contact_cutoff: Option<f64>,
+    interface_cutoff: Option<f64>,
+    file_names: Option<Vec<String>>,
+) -> PyResult<Vec<Py<PyAny>>> {
+    let filenames = resolve_filenames(structure_dir, file_names)?;
+    let config = dockq_config(mode, contact_cutoff, interface_cutoff)?;
+    let partners = resolve_contacts_partners(receptor, ligand)?;
+
+    let per_interface = all_dockq_against_native(
+        native_structure,
+        &filenames,
+        structure_dir,
+        partners.as_ref().map(|(_, dockq_partners)| dockq_partners),
+        &config,
+    )
+    .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+
+    let mut rows = Vec::with_capacity(per_interface.len());
+    for interface in per_interface {
+        let display = partners
+            .as_ref()
+            .map_or(&interface.partners, |(display_partners, _)| {
+                display_partners
+            });
+        let score = interface.result.map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "failed to compute DockQ for model '{}' interface '{}:{}': {}",
+                interface.model, display.receptor, display.ligand, err
+            ))
+        })?;
+        let row = PyDict::new(py);
+        row.set_item("model", &interface.model)?;
+        row.set_item("receptor", &display.receptor)?;
+        row.set_item("ligand", &display.ligand)?;
+        row.set_item("dockq", score.dockq)?;
+        row.set_item("fnat", score.fnat)?;
+        row.set_item("irmsd", score.irmsd)?;
+        row.set_item("lrmsd", score.lrmsd)?;
+        row.set_item("native_contacts", score.native_contacts)?;
+        row.set_item("model_contacts", score.model_contacts)?;
+        row.set_item("shared_contacts", score.shared_contacts)?;
+        row.set_item("nonnative_contacts", score.nonnative_contacts)?;
+        row.set_item("clashes", score.clashes)?;
+        rows.push(row.into_any().unbind());
+    }
+
     Ok(rows)
 }
 
@@ -712,6 +823,7 @@ fn run_cli(args: Option<Vec<String>>) -> PyResult<()> {
 
 #[pymodule]
 fn massif(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    crate::tune_allocator();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(structure_files, m)?)?;
     m.add_function(wrap_pyfunction!(align, m)?)?;
@@ -721,6 +833,7 @@ fn massif(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(contacts, m)?)?;
     m.add_function(wrap_pyfunction!(clash_counts, m)?)?;
     m.add_function(wrap_pyfunction!(clashes, m)?)?;
+    m.add_function(wrap_pyfunction!(dockq, m)?)?;
     m.add_function(wrap_pyfunction!(reduce_to_point, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_coordinates, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_models, m)?)?;

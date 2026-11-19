@@ -64,10 +64,14 @@ contacts = massif.contacts(
     ligand="B",
     contact_cutoff=4.0,
 )
-
-# One record per model and chain: model, chain, nclash, residues, nclash_chain, overlap, intra, collapse
 clashes = pd.DataFrame(massif.clashes("path/to/structures"))
 largest_overlap = clashes.groupby("model")["overlap"].max()
+dockq = massif.dockq(
+    "path/to/structures",
+    "path/to/native.cif",
+    receptor="A",
+    ligand="B",
+)
 ```
 <!-- docs-python-end -->
 
