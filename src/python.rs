@@ -434,6 +434,7 @@ fn iplddt(
 /// Extract residue-residue contacts as flat Python dict records.
 ///
 /// Each returned dict contains:
+///
 /// - `model`
 /// - `receptor`
 /// - `ligand`
@@ -499,6 +500,7 @@ fn clash_counts(structure_dir: &str, file_names: Option<Vec<String>>) -> PyResul
 /// Clash measures per model and chain, as flat Python dict records (one per model and chain).
 ///
 /// Each returned dict contains:
+///
 /// - `model`: the structure file name
 /// - `chain`: the chain identifier
 /// - `nclash`: the model's inter-chain clashing residue pairs
