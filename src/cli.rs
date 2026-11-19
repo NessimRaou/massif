@@ -15,7 +15,7 @@ use crate::adjacency::{all_adjacency, parallel_all_adjacency};
 use crate::contacts::clashes_writing_contact_details;
 use crate::structure_clustering::run_cluster_workflow;
 use crate::{
-    all_alignment, all_contacts_with_clashes, all_distances, all_iplddt, all_min_distances,
+    all_alignment, all_structure_clashes, ChainClashes, all_contacts_with_clashes, all_distances, all_iplddt, all_min_distances,
     all_scores_computation, clashes_threshold, filter_chain_pairs, parallel_all_alignment,
     sanitize_data, score_interface, structure_files_from_directory, ChainDistance,
 };
@@ -284,6 +284,16 @@ enum Commands {
         /// Optional directory where aligned reference and models will be written
         #[arg(long)]
         aligned_output_dir: Option<String>,
+        #[command(flatten)]
+        common: CommonArgs,
+    },
+    /// Per-model clash measures: the total inter-chain clashing residue pairs (nclash). Per chain: inter-chain
+    /// clashing residues (nclash_chain{chain}), its overlap ratio with all other chains (overlap_chain{chain}),
+    /// its self-chain residue pairs clashed (intra_chain{chain}), and its self-chain clashes (collapse_chain{chain}).
+    Clashes {
+        /// Comma-separated chains to report (e.g. "A,B,C"), by default every chain.
+        #[arg(short, long, value_delimiter = ',')]
+        chains: Option<Vec<String>>,
         #[command(flatten)]
         common: CommonArgs,
     },
@@ -571,6 +581,61 @@ fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             let _csv_report = common.csv_report;
 
             let _scores = all_scores_computation(&structures, &file_names);
+        }
+        Commands::Clashes { chains, common } => {
+            let structures = common.structures;
+            let csv_report = common.csv_report;
+            let file_names = structure_files_from_directory(&structures)?;
+
+            let clashes = all_structure_clashes(&file_names, &structures, do_in_parallel)?;
+
+            let present: IndexSet<&str> = clashes
+                .iter()
+                .flat_map(|model| model.chains.iter().map(|chain| chain.chain.as_str()))
+                .collect();
+            let chains: Vec<String> = match chains {
+                Some(chains) => {
+                    for chain in chains.iter().filter(|chain| !present.contains(chain.as_str())) {
+                        eprintln!("Chain {chain} is in none of the structures: its columns are empty");
+                    }
+                    chains
+                }
+                None => present.iter().map(|chain| chain.to_string()).collect(),
+            };
+
+            report_colnames.push(String::from("nclash"));
+            final_report.push(clashes.iter().map(|model| model.nclash.to_string()).collect());
+
+            let measures: [(&str, fn(&ChainClashes) -> String); 4] = [
+                ("nclash_chain", |chain| chain.nclash.to_string()),
+                ("overlap_chain", |chain| chain.overlap.to_string()),
+                ("intra_chain", |chain| chain.intra.to_string()),
+                ("collapse_chain", |chain| chain.collapse.to_string()),
+            ];
+            for (name, value) in measures {
+                for chain in &chains {
+                    report_colnames.push(format!("{name}{chain}"));
+                    // Empty for a model without the chain
+                    final_report.push(
+                        clashes
+                            .iter()
+                            .map(|model| {
+                                model
+                                    .chains
+                                    .iter()
+                                    .find(|measures| &measures.chain == chain)
+                                    .map(value)
+                                    .unwrap_or_default()
+                            })
+                            .collect(),
+                    );
+                }
+            }
+
+            report_colnames.push(String::from("Models"));
+            final_report.push(file_names);
+
+            report_to_csv_structured(&csv_report, final_report, report_colnames)?;
         }
         Commands::Adjacency { cutoff, common } => {
             let structures = common.structures;

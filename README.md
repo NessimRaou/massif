@@ -50,6 +50,7 @@ massif fit <OUTPUT_DIR> <REFERENCE_PDB> <CHAIN_IDS> <STRUCTURE_DIR> <OUTPUT_CSV>
 Example usage:
 ```python
 import massif
+import pandas as pd
 
 files = massif.structure_files("path/to/structures")
 distances = massif.distances(
@@ -63,6 +64,10 @@ contacts = massif.contacts(
     ligand="B",
     contact_cutoff=4.0,
 )
+
+# One record per model and chain: model, chain, nclash, residues, nclash_chain, overlap, intra, collapse
+clashes = pd.DataFrame(massif.clashes("path/to/structures"))
+largest_overlap = clashes.groupby("model")["overlap"].max()
 ```
 <!-- docs-python-end -->
 
@@ -120,6 +125,22 @@ massif contacts <OUTPUT_DIR> <STRUCTURE_DIR> <OUTPUT_CSV>
 - Reports the number of atomic clashes per model and prints the automatic exclusion threshold (mean + 2×SD)
 - Adds interface score placeholders (future integration of pTM/ipTM based scoring)
 - Aligned structures are not emitted; `OUTPUT_DIR` is reserved for future extensions
+
+### `clashes`
+Clash measures of every model, in total and per chain.
+```bash
+massif clashes [--chains A,B,C] <STRUCTURE_DIR> <OUTPUT_CSV>
+```
+- `nclash`: inter-chain residue pairs with two heavy atoms closer than 2 Å (the count of `contacts`)
+- Per chain `{chain}` (every chain by default, or those of `--chains`; each measured against all the other chains of the model):
+  - `nclash_chain{chain}`: the inter-chain clashing residue pairs the chain takes part in
+  - `overlap_chain{chain}`: the overlap ratio of the chain with all the other chains, i.e. its residues with a backbone atom (N, CA, C, O) closer
+    than 2 Å to the backbone of any other chain (each counted once), over its residues
+  - `intra_chain{chain}`: the chain's residue pairs at least 3 apart in sequence with two heavy atoms closer than 2 Å
+  - `collapse_chain{chain}`: the share of the chain's residues in such a pair between backbone atoms (a collapsed chain)
+- Heavy atoms of ATOM records of the first model; a chain column is empty for a model without that chain
+- Python: `massif.clashes(structure_dir, *, file_names=None, chains=None, parallel=True)` returns the same measures as one dict per model and chain,
+  with `residues` (the denominator of the two ratios)
 
 ### `iplddt`
 Compute the mean pLDDT over residues at a user-defined interface.

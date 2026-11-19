@@ -28,7 +28,7 @@ fn read_structure(pdb_path: &str) -> PDB {
 }
 
 /// dockq-rs's clash cutoff (`pipeline::CLASH_CUTOFF`, private there): a residue pair clashes when two of its heavy atoms are closer than this, in angstroms.
-const CLASH_CUTOFF: f64 = 2.0;
+pub(crate) const CLASH_CUTOFF: f64 = 2.0;
 
 /// Clashing residue pairs of one interface, read from its contacts (each carries the minimum heavy-atom distance of the pair).
 fn clash_count_from_contacts(interface: &DockQInterfaceContactsResult, pdb_path: &str) -> f64 {

@@ -6,6 +6,7 @@ use pyo3::types::PyDict;
 use crate::adjacency::{all_adjacency, parallel_all_adjacency};
 use crate::alignment::{all_alignment, parallel_all_alignment};
 use crate::chain_distances::{all_min_distances, minimal_chain_distances, ChainDistance};
+use crate::clashes::all_structure_clashes;
 use crate::cli;
 use crate::contacts::{
     all_contacts, all_contacts_with_clashes, clashes_threshold, interface_contacts,
@@ -462,6 +463,51 @@ fn clash_counts(structure_dir: &str, file_names: Option<Vec<String>>) -> PyResul
     Ok((threshold, counts))
 }
 
+/// Clash measures per model and chain, as flat Python dict records (one per model and chain).
+///
+/// Each returned dict contains:
+/// - `model`: the structure file name
+/// - `chain`: the chain identifier
+/// - `nclash`: the model's inter-chain clashing residue pairs
+/// - `residues`: number of chain's residues (denominator of `overlap` and `collapse`)
+/// - `nclash_chain`: number of inter-chain clashes the chain takes part in
+/// - `overlap`: overlap ratio of the chain and all other chains
+/// - `intra`: chain's self-clashes
+/// - `collapse`: share of the chain's residues that takes part in a clash
+///
+/// Rows follow the order of `file_names` (or `massif.structure_files(structure_dir)`), then the model's chain order.
+#[pyfunction(signature = (structure_dir, *, file_names=None, chains=None, parallel=true))]
+fn clashes(
+    py: Python<'_>,
+    structure_dir: &str,
+    file_names: Option<Vec<String>>,
+    chains: Option<Vec<String>>,
+    parallel: bool,
+) -> PyResult<Vec<Py<PyAny>>> {
+    let filenames = resolve_filenames(structure_dir, file_names)?;
+    let per_model = all_structure_clashes(&filenames, structure_dir, parallel).map_err(PyRuntimeError::new_err)?;
+
+    let mut rows = Vec::new();
+    for (model, measures) in filenames.iter().zip(per_model.iter()) {
+        for chain in &measures.chains {
+            if chains.as_ref().is_some_and(|kept| !kept.contains(&chain.chain)) {
+                continue;
+            }
+            let row = PyDict::new(py);
+            row.set_item("model", model)?;
+            row.set_item("chain", &chain.chain)?;
+            row.set_item("nclash", measures.nclash)?;
+            row.set_item("residues", chain.residues)?;
+            row.set_item("nclash_chain", chain.nclash)?;
+            row.set_item("overlap", chain.overlap)?;
+            row.set_item("intra", chain.intra)?;
+            row.set_item("collapse", chain.collapse)?;
+            rows.push(row.into_any().unbind());
+        }
+    }
+    Ok(rows)
+}
+
 /// Align submitted models on a reference and reduce each model to one 3D point.
 ///
 /// Returns four parallel lists `(models, x, y, z)` in the same order as the
@@ -674,6 +720,7 @@ fn massif(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(iplddt, m)?)?;
     m.add_function(wrap_pyfunction!(contacts, m)?)?;
     m.add_function(wrap_pyfunction!(clash_counts, m)?)?;
+    m.add_function(wrap_pyfunction!(clashes, m)?)?;
     m.add_function(wrap_pyfunction!(reduce_to_point, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_coordinates, m)?)?;
     m.add_function(wrap_pyfunction!(cluster_models, m)?)?;

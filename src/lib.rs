@@ -1,5 +1,6 @@
 mod alignment;
 mod chain_distances;
+mod clashes;
 pub mod cli;
 mod contacts;
 mod interface;
@@ -12,6 +13,7 @@ pub use alignment::{all_alignment, parallel_all_alignment, structure_files_from_
 pub use chain_distances::{
     all_min_distances, filter_chain_pairs, minimal_chain_distances, sanitize_data, ChainDistance,
 };
+pub use clashes::{all_structure_clashes, structure_clashes, ChainClashes, ModelClashes};
 pub use contacts::{
     all_clashes, all_contacts, all_contacts_with_clashes, clashes_threshold, count_clashes,
     results_to_csv_string, write_interface_contacts_csv, FlatContactRecord, ModelContactsSummary,
