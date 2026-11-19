@@ -26,6 +26,9 @@ polars = { version = "0.39", features = ["csv"] }
 pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 dockq-rs = { git = "https://github.com/NessimRaou/dockq-rs", tag = "v0.7.0" }
 
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 criterion = "0.3"
 
