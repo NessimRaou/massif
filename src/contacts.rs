@@ -11,8 +11,8 @@ use serde::Serialize;
 use crate::alignment::structure_file_path;
 use crate::progress::default_progress_style;
 use dockq_rs::{
-    all_interfaces_contacts, compare_contacts, extract_contacts, DockQConfig, DockQContact,
-    DockQContacts, DockQError, DockQInterfaceContactsResult, DockQPartners, ResidueKey,
+    all_interfaces_contacts, extract_contacts, DockQConfig, DockQContact,
+    DockQContacts, DockQInterfaceContactsResult, DockQPartners, ResidueKey,
 };
 
 #[derive(Clone, Debug)]
@@ -27,18 +27,19 @@ fn read_structure(pdb_path: &str) -> PDB {
     structure
 }
 
-fn clash_count_for_interface(
-    structure: &PDB,
-    partners: &DockQPartners,
-    config: &DockQConfig,
-    pdb_path: &str,
-) -> f64 {
-    match compare_contacts(structure, structure, partners, config) {
-        Ok(contacts) => contacts.clashes.len() as f64,
-        Err(DockQError::NoNativeContacts) => 0.0,
+/// dockq-rs's clash cutoff (`pipeline::CLASH_CUTOFF`, private there): a residue pair clashes when two of its heavy atoms are closer than this, in angstroms.
+const CLASH_CUTOFF: f64 = 2.0;
+
+/// Clashing residue pairs of one interface, read from its contacts (each carries the minimum heavy-atom distance of the pair).
+fn clash_count_from_contacts(interface: &DockQInterfaceContactsResult, pdb_path: &str) -> f64 {
+    match &interface.result {
+        Ok(contacts) => contacts
+            .iter()
+            .filter(|contact| contact.distance < CLASH_CUTOFF)
+            .count() as f64,
         Err(err) => panic!(
             "Issue computing clashes for interface {}:{} in {}: {}",
-            partners.receptor, partners.ligand, pdb_path, err
+            interface.partners.receptor, interface.partners.ligand, pdb_path, err
         ),
     }
 }
@@ -68,9 +69,7 @@ fn structure_contacts_summary(pdb_path: &str, config: &DockQConfig) -> ModelCont
     let interfaces = all_interfaces_contacts(&structure, config);
     let clashes = interfaces
         .iter()
-        .map(|interface| {
-            clash_count_for_interface(&structure, &interface.partners, config, pdb_path)
-        })
+        .map(|interface| clash_count_from_contacts(interface, pdb_path))
         .sum();
 
     ModelContactsSummary {
