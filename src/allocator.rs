@@ -2,7 +2,7 @@
 /// MALLOC_TOP_PAD_ in the environment still takes precedence.
 /// Applied by the massif binary at startup and by the Python module when it is imported.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn tune_allocator() {
+pub fn tune_allocator() {
     if std::env::var_os("MALLOC_TOP_PAD_").is_none() {
         // SAFETY: mallopt only sets an allocator parameter; it is called before any thread starts.
         unsafe {
@@ -12,4 +12,4 @@ fn tune_allocator() {
 }
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn tune_allocator() {}
+pub fn tune_allocator() {}

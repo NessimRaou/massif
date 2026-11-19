@@ -539,6 +539,9 @@ fn clashes(
         }
     }
 
+    Ok(rows)
+}
+
 /// Compute DockQ of every model against a native structure, as flat Python dict records.
 ///
 /// Each returned dict contains `model`, `receptor`, `ligand`, `dockq`, `fnat`,
